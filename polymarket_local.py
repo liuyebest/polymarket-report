@@ -1,4 +1,5 @@
-# Polymarket 每日报告 - 改进版（支持多个 API + 官方分类）
+# Polymarket 每日报告 - 最终版
+# 使用 Gamma API + 官方分类 + 关键词过滤
 
 import requests
 from datetime import datetime, timedelta
@@ -9,58 +10,27 @@ import json
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-# 历史数据存储文件
 HISTORY_FILE = "market_history.json"
 
-# ============= 官方分类映射 =============
-# 用户选择的分类：保留 6 个核心分类 + 其他
-OFFICIAL_CATEGORIES = {
-    'politics': True,      # 保留 - 政治
-    'economy': True,       # 保留 - 经济
-    'finance': True,       # 保留 - 金融
-    'crypto': True,        # 保留 - 加密货币
-    'tech': True,          # 保留 - 技术
-    'mentions': True,      # 保留 - 提及
-    'other': True,         # 保留 - 其他
-    'climate-science': False,  # 排除
-    'culture': False,      # 排除
-    'sports': False,       # 排除
+# ============= 用户选择的分类 =============
+# 保留的分类
+KEEP_CATEGORIES = {
+    'politics': True,
+    'economy': True,
+    'finance': True,
+    'crypto': True,
+    'tech': True,
+    'mentions': True,
+    'other': True,
+}
+# 排除的分类
+EXCLUDE_CATEGORIES = {
+    'sports': True,
+    'culture': True,
+    'climate-science': True,
 }
 
-# CLOB API 中要保留的 Tags
-# 只保留与政治、经济、金融、加密、科技、地缘政治、选举、伊朗相关的
-KEEP_CLOB_TAGS = [
-    # 政治 & 选举
-    'politics', 'elections', 'u.s. politics', 'usa election', '2024 election',
-    'presidential election', 'u.s. election', 'us elections', 'us presidency',
-    'trump', 'biden', 'donald trump', 'joe biden', 'kamala harris',
-    'presidential nomination', 'democratic party', 'republican party',
-    'u.s. government', 'us government', 'presidency', 'potus',
-    
-    # 经济 & 金融
-    'finance', 'federal reserve', 'interest rates', 'monetary policy',
-    'economy', 'monetary policy', 'economic policy', 'trading',
-    
-    # 加密货币
-    'crypto', 'blockchain', 'token launch', 'fdv',
-    
-    # 科技
-    'ai', 'technology', 'machine learning', 'gpt-4',
-    
-    # 地缘政治
-    'geopolitics', 'iran', 'israel', 'military', 'nuclear weapons',
-    'international relations', 'global security', 'middle east',
-    
-    # 其他保留
-    'breaking news', 'predictions', 'future events', 'security',
-]
-
-# CLOB API 中要排除的 Tags
-EXCLUDE_CLOB_TAGS = [
-    'sports', 'awards', 'culture', 'entertainment', 'games', 'gaming'
-]
-
-# 白名单：必须包含的关键词
+# ============= 白名单关键词 =============
 ALLOWED_KEYWORDS = [
     # 政治/选举
     'trump', 'biden', 'election', 'president', 'congress', 'senate', 'political', 'politics',
@@ -86,7 +56,7 @@ ALLOWED_KEYWORDS = [
     'machine learning',
 ]
 
-# 黑名单：排除的关键词
+# ============= 黑名单关键词 =============
 EXCLUDED = [
     # 体育赛事/比赛
     'world cup', 'football', 'soccer', 'nba', 'nfl', 'nhl', 'mlb', 'ufc',
@@ -112,8 +82,7 @@ EXCLUDED = [
 ]
 
 # ============= 获取市场数据 =============
-def get_markets_from_gamma():
-    """从 Gamma API 获取市场"""
+def get_markets():
     url = "https://gamma-api.polymarket.com/markets?closed=false&limit=500"
     try:
         r = requests.get(url, timeout=30)
@@ -121,119 +90,22 @@ def get_markets_from_gamma():
     except:
         return []
 
-def get_markets_from_clob():
-    """从 CLOB API 获取市场（包含 tags）"""
-    url = "https://clob.polymarket.com/markets?limit=1000"
-    try:
-        r = requests.get(url, timeout=30)
-        if r.status_code == 200:
-            data = r.json()
-            return data.get('data', [])
-        return []
-    except:
-        return []
-
 # ============= 过滤函数 =============
-def is_filtered_by_category(market_category):
-    """根据官方分类判断是否过滤
-    
-    Returns:
-        None - 分类未知，继续其他过滤
-        True - 应该保留
-        False - 应该排除
-    """
-    if not market_category:
-        return None
-    
-    category_lower = market_category.lower()
-    if category_lower in OFFICIAL_CATEGORIES:
-        should_keep = OFFICIAL_CATEGORIES[category_lower]
-        return should_keep
-    
-    return None
+def is_filtered(m):
+    question = m.get('question', '').lower()
+    description = m.get('description', '').lower() if m.get('description') else ''
+    text = question + ' ' + description
 
-def is_filtered_by_tags(tags):
-    """根据 CLOB API 的 tags 判断是否过滤
-    
-    Returns:
-        True - 应该保留
-        False - 应该排除
-        None - 无法判断，继续其他过滤
-    """
-    if not tags or not isinstance(tags, list):
-        return None
-    
-    # 转换为小写便于匹配
-    tags_lower = [t.lower() if isinstance(t, str) else t for t in tags]
-    
-    # 第一优先级：排除明确的体育、娱乐标签
-    if any(tag in EXCLUDE_CLOB_TAGS for tag in tags_lower):
-        return False
-    
-    # 第二优先级：包含保留的标签 → 保留
-    if any(keep_tag in tags_lower for keep_tag in KEEP_CLOB_TAGS):
-        return True
-    
-    # 如果只有 'All' 标签，无法判断，继续其他过滤
-    if tags_lower == ['all']:
-        return None
-    
-    # 其他未知标签，无法判断，继续其他过滤
-    return None
-
-def is_filtered_by_keywords(question, description='', category=''):
-    """根据关键词过滤"""
-    text = f"{question} {description} {category}".lower()
-    
-    # 黑名单：如果包含排除的关键词，直接过滤
+    # 黑名单:如果包含排除的关键词,直接过滤
     if any(kw in text for kw in EXCLUDED):
         return True
-    
-    # 白名单：必须包含至少一个允许的关键词
+
+    # 白名单:必须包含至少一个允许的关键词
     if not any(kw in text for kw in ALLOWED_KEYWORDS):
         return True
-    
+
     return False
 
-def should_include_market(market, use_clob=False):
-    """判断是否应该包含市场
-    
-    Args:
-        market: 市场数据对象
-        use_clob: 是否使用 CLOB API 的数据（包含 tags）
-    
-    Returns:
-        True - 包含，False - 排除
-    """
-    
-    # 获取市场信息
-    if use_clob:
-        question = market.get('question', '')
-        description = market.get('description', '')
-        category = None  # CLOB API 没有 category 字段
-        tags = market.get('tags', [])
-    else:
-        question = market.get('question', '')
-        description = market.get('description', '')
-        category = market.get('category', '')
-        tags = []
-    
-    # 第一层：官方分类过滤（仅 Gamma API）
-    if not use_clob and category:
-        result = is_filtered_by_category(category)
-        if result is not None:
-            return result
-    
-    # 第二层：Tags 过滤（仅 CLOB API）
-    if use_clob and tags:
-        result = is_filtered_by_tags(tags)
-        if result is not None:
-            return result
-    
-    # 第三层：关键词过滤（备选方案）
-    return not is_filtered_by_keywords(question, description, category or '')
-
-# ============= 工具函数 =============
 def is_expired(end_date):
     if not end_date: return False
     try:
@@ -251,14 +123,14 @@ def is_within_range(end_date, days_min=7, days_max=365):
         return days_min <= days_until <= days_max
     except: return False
 
-def format_vol(v): 
+def format_vol(v):
     v = float(v or 0)
     return f"${v/1e6:.2f}M" if v>=1e6 else f"${v/1e3:.1f}K" if v>=1e3 else f"${v:.0f}"
 
-def format_pct(p): 
+def format_pct(p):
     return f"{float(p or 0)*100:.1f}%" if p else "N/A"
 
-def format_end(d): 
+def format_end(d):
     return d[:10] if d else "N/A"
 
 # ============= 历史数据管理 =============
@@ -285,7 +157,7 @@ def calculate_changes(current_price, history):
         "change_7d_pct": 0,
         "comparing_time": "No historical data"
     }
-    
+
     if history:
         h = history
         if 'price_24h' in h and h['price_24h']:
@@ -297,7 +169,7 @@ def calculate_changes(current_price, history):
                 changes["comparing_time"] = "vs 24h & 7d ago"
             else:
                 changes["comparing_time"] = "vs 7d ago"
-    
+
     return changes
 
 # ============= Telegram 发送 =============
@@ -309,22 +181,22 @@ def send_telegram(text):
 
 def send_document(html_content, date_str, max_retries=3):
     filename = f"polymarket_report_{date_str}.html"
-    
+
     with open(filename, 'w', encoding='utf-8') as f:
         f.write(html_content)
-    
+
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
-    
+
     for attempt in range(max_retries):
         try:
             with open(filename, 'rb') as f:
                 files = {'document': (filename, f, 'text/html')}
-                data = {'chat_id': TELEGRAM_CHAT_ID, 'caption': f"📊 Polymarket Daily Report - {date_str}"}
+                data = {'chat_id': TELEGRAM_CHAT_ID, 'caption': f"Polymarket Daily Report - {date_str}"}
                 r = requests.post(url, data=data, files=files, timeout=(30, 120))
-            
+
             print(f"Telegram API Response: {r.status_code}")
             return r.json().get('ok', False)
-        
+
         except requests.exceptions.Timeout as e:
             print(f"Timeout on attempt {attempt + 1}/{max_retries}: {e}")
             if attempt < max_retries - 1:
@@ -335,62 +207,48 @@ def send_document(html_content, date_str, max_retries=3):
         except Exception as e:
             print(f"Error sending document: {e}")
             return False
-    
+
     return False
 
 # ============= 报告生成 =============
-def generate_html_report(markets, report_date, history, use_clob=False):
+def generate_html_report(markets, report_date, history):
     rd = report_date.strftime("%Y-%m-%d")
     now = datetime.now()
-    
+
     print(f"Total markets from API: {len(markets)}")
     filtered_count = 0
     expired_count = 0
-    
+
     data = []
     error_count = 0
-    
+
     for m in markets:
-        if not should_include_market(m, use_clob=use_clob):
+        if is_filtered(m):
             filtered_count += 1
             continue
-        
-        if is_expired(m.get('endDate') or m.get('end_date_iso')):
+        if is_expired(m.get('endDate')):
             expired_count += 1
             continue
-        
         try:
-            # 处理不同 API 的字段差异
-            if use_clob:
-                question = m.get('question', '')
-                end_date = m.get('end_date_iso', '')
-                price = 0  # CLOB API 没有直接的价格，需要从 tokens 获取
-                volume_24h = 0
-                volume_total = 0
-            else:
-                prices = m.get('outcomePrices', [])
-                if isinstance(prices, str):
-                    try:
-                        prices = json.loads(prices)
-                    except:
-                        prices = []
-                price = float(prices[0]) if prices and len(prices) > 0 else 0
-                question = m.get('question', '')[:200]
-                end_date = m.get('endDate', '')
-                volume_24h = float(m.get('volume24hr') or 0)
-                volume_total = float(m.get('volume') or 0)
-            
-            market_id = m.get('id', m.get('condition_id', ''))
-            
+            prices = m.get('outcomePrices', [])
+            if isinstance(prices, str):
+                try:
+                    prices = json.loads(prices)
+                except Exception as parse_error:
+                    print(f"Failed to parse prices: {parse_error}")
+                    prices = []
+            price = float(prices[0]) if prices and len(prices) > 0 else 0
+            market_id = m.get('id', m.get('conditionId', ''))
+
             changes = calculate_changes(price, history.get(market_id, {}))
-            
+
             data.append({
-                'q': question,
-                'c': m.get('category', '') or m.get('market_slug', '')[:30],
-                'e': end_date,
+                'q': m.get('question',''),
+                'c': m.get('category',''),
+                'e': m.get('endDate',''),
                 'p': price,
-                'v24': volume_24h,
-                'vt': volume_total,
+                'v24': float(m.get('volume24hr') or 0),
+                'vt': float(m.get('volume') or 0),
                 'change_24h': changes['change_24h_abs'],
                 'change_7d': changes['change_7d_abs'],
                 'comparing_time': changes['comparing_time']
@@ -399,10 +257,55 @@ def generate_html_report(markets, report_date, history, use_clob=False):
             error_count += 1
             print(f"Error processing market: {e}")
             continue
-    
+
     print(f"Filtered: {filtered_count}, Expired: {expired_count}, Errors: {error_count}, Valid: {len(data)}")
-    
-    # 简化的 HTML 模板...（保持原有的 HTML 生成逻辑）
+
+    # 更新历史数据
+    new_history = history.copy()
+    updated_count = 0
+    new_markets_count = 0
+
+    for m in markets:
+        if is_filtered(m) or is_expired(m.get('endDate')): continue
+        try:
+            market_id = m.get('id', m.get('conditionId', ''))
+            prices = m.get('outcomePrices', [])
+            if isinstance(prices, str):
+                try:
+                    prices = json.loads(prices)
+                except:
+                    prices = []
+            price = float(prices[0]) if prices and len(prices) > 0 else 0
+
+            if market_id in new_history:
+                old_24h = new_history[market_id].get('price_24h', price)
+                new_history[market_id]['price_7d'] = old_24h
+                new_history[market_id]['price_24h'] = price
+                new_history[market_id]['timestamp'] = now.isoformat()
+                updated_count += 1
+            else:
+                new_history[market_id] = {
+                    'price_24h': price,
+                    'price_7d': price,
+                    'timestamp': now.isoformat()
+                }
+                new_markets_count += 1
+        except Exception as e:
+            print(f"Error updating history: {e}")
+            continue
+
+    print(f"History updated: {updated_count} existing, {new_markets_count} new markets")
+    save_history(new_history)
+
+    # 排序 - Top10
+    by_rise = sorted(data, key=lambda x: x['change_24h'], reverse=True)[:10]
+    by_fall = sorted(data, key=lambda x: x['change_24h'])[:10]
+    by_vt = sorted(data, key=lambda x: x['vt'], reverse=True)[:10]
+    by_v24 = sorted(data, key=lambda x: x['v24'], reverse=True)[:10]
+    by_future = [x for x in data if is_within_range(x['e'])][:10]
+    by_future = sorted(by_future, key=lambda x: x['p'], reverse=True)[:10]
+
+    # 生成HTML
     html = f'''<!DOCTYPE html>
 <html>
 <head>
@@ -410,77 +313,103 @@ def generate_html_report(markets, report_date, history, use_clob=False):
 <style>
 body{{font-family:sans-serif;background:#1a1a2e;color:#e4e4e4;padding:10px}}
 .container{{max-width:900px;margin:0 auto}}
-h1{{color:#00d4ff;text-align:center}}
+h1{{color:#00d4ff;text-align:center;padding:10px 0}}
+.info{{text-align:center;gap:10px;display:flex;justify-content:center;margin:10px 0}}
+.info span{{background:#1e3a5a;padding:5px 10px;border-radius:5px}}
+.note{{background:#2d2d44;padding:10px;border-radius:5px;margin:10px 0;font-size:12px}}
+.section{{background:#252538;padding:15px;margin:10px 0;border-radius:5px}}
+.section h2{{color:#fff;margin:0 0 10px 0}}
 table{{width:100%;border-collapse:collapse;font-size:12px}}
-th{{background:#1e3a5a;color:#00d4ff;padding:5px}}
-td{{padding:8px;border-bottom:1px solid #333}}
-.title{{color:#fff;max-width:350px;word-wrap:break-word;word-break:break-word}}
+th{{background:#1e3a5a;color:#00d4ff;padding:5px;text-align:left}}
+td{{padding:8px;border-bottom:1px solid #333;vertical-align:top}}
+.rank{{color:#00d4ff;font-weight:bold;text-align:center;width:30px}}
+.title{{color:#fff;font-size:13px;line-height:1.4;max-width:350px;word-wrap:break-word;word-break:break-word}}
+.cat{{color:#888;font-size:10px;margin-top:3px}}
+.prob{{padding:2px 6px;border-radius:3px;font-weight:bold}}
 .high{{background:#004d26;color:#00ff88}}
 .mid{{background:#4d3d00;color:#ffc107}}
 .low{{background:#4d1a1a;color:#ff5252}}
 .up{{color:#00ff88}}
 .down{{color:#ff5252}}
+.vol{{color:#ffc107}}
+.date{{color:#888;font-size:11px}}
 </style>
 </head>
 <body>
 <div class="container">
-<h1>📊 Polymarket Daily Report - {rd}</h1>
-<p>API Source: {"CLOB" if use_clob else "Gamma"} | Markets: {len(data)} | Filtered: {filtered_count}</p>
-<p>Data Source: CLOB/Gamma API + Official Categories + Keyword Filtering</p>
-<table>
-<tr><th>#</th><th>Event</th><th>Current</th><th>24h Change</th><th>End Date</th><th>24h Volume</th></tr>
+<h1>Polymarket Daily Report - {rd}</h1>
+<div class="info">
+<span>Date: {rd}</span>
+<span>Beijing Time: 08:00</span>
+</div>
+<div class="note">
+Filtered: Sports/Gaming/Entertainment | Valid Markets: {len(data)} | Comparing: {by_rise[0]['comparing_time'] if by_rise else 'No historical data'}
+</div>
 '''
-    
-    by_rise = sorted(data, key=lambda x: x['change_24h'], reverse=True)[:10]
-    for i, x in enumerate(by_rise, 1):
-        pc = 'high' if x['p']>0.6 else 'mid' if x['p']>0.3 else 'low'
-        change_24h_pct = f"+{x['change_24h']*100:.1f}%" if x['change_24h'] >= 0 else f"{x['change_24h']*100:.1f}%"
-        cls_24h = 'up' if x['change_24h'] >= 0 else 'down'
-        
-        html += f'''<tr>
-<td>{i}</td>
-<td><div class="title">{x['q']}</div></td>
-<td><span class="{pc}">{format_pct(x['p'])}</span></td>
-<td class="{cls_24h}">{change_24h_pct}</td>
-<td>{format_end(x['e'])}</td>
-<td>{format_vol(x['v24'])}</td>
+
+    def build_table(rows, title, rise=True, show_change=True):
+        nonlocal html
+        html += f'''<div class="section">
+<h2>{'📈' if rise else '📉'} {title}</h2>
+<table><tr><th>#</th><th>Event</th><th>Current</th><th>24h Change</th><th>7d Change</th><th>End Date</th><th>24h Vol</th><th>Total Vol</th></tr>'''
+        for i, x in enumerate(rows[:10], 1):
+            pc = 'high' if x['p']>0.6 else 'mid' if x['p']>0.3 else 'low'
+            change_24h = x['change_24h'] * 100
+            change_7d = x['change_7d'] * 100
+
+            delta_24h = f"+{change_24h:.1f}%" if change_24h >= 0 else f"{change_24h:.1f}%"
+            delta_7d = f"+{change_7d:.1f}%" if change_7d >= 0 else f"{change_7d:.1f}%"
+            cls_24h = 'up' if change_24h >= 0 else 'down'
+            cls_7d = 'up' if change_7d >= 0 else 'down'
+
+            html += f'''<tr>
+<td class='rank'>{i}</td>
+<td><div class='title' title="{x['q']}">{x['q']}</div><div class='cat'>{x['c']}</div></td>
+<td><span class='prob {pc}'>{format_pct(x['p'])}</span></td>
+<td class='{cls_24h}'>{delta_24h}</td>
+<td class='{cls_7d}'>{delta_7d}</td>
+<td class='date'>{format_end(x['e'])}</td>
+<td class='vol'>{format_vol(x['v24'])}</td>
+<td class='vol'>{format_vol(x['vt'])}</td>
 </tr>'''
-    
-    html += '''</table>
+        html += '</table></div>'
+
+    # 5个分类
+    build_table(by_rise, "Top Probability Rise", True)
+    build_table(by_fall, "Top Probability Fall", False)
+    build_table(by_vt, "Top Total Volume", True)
+    build_table(by_v24, "Top 24h Volume", True)
+    build_table(by_future, "Top Future High Probability", True)
+
+    html += f'''
+<footer style="text-align:center;padding:10px;color:#666;font-size:10px">
+<p>Generated: {rd} | API: Gamma API | {by_rise[0]['comparing_time'] if by_rise else 'N/A'}</p>
+</footer>
 </div>
 </body>
 </html>'''
-    
+
     return html
 
 # ============= 主函数 =============
 def main():
     print(f"Running at {datetime.now()}")
-    
+
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         print("ERROR: TELEGRAM_TOKEN or TELEGRAM_CHAT_ID is missing!")
         return
-    
+
     history = load_history()
     print(f"Loaded history: {len(history)} markets")
-    
-    # 尝试 CLOB API（推荐）
-    print("\n1. Trying CLOB API...")
-    markets = get_markets_from_clob()
-    use_clob = True
-    
-    if not markets:
-        print("2. CLOB API failed, falling back to Gamma API...")
-        markets = get_markets_from_gamma()
-        use_clob = False
-    
-    print(f"Got {len(markets)} markets from {'CLOB' if use_clob else 'Gamma'} API")
-    
+
+    markets = get_markets()
+    print(f"Got {len(markets)} markets from Gamma API")
+
     report_date = datetime.now()
     date_str = report_date.strftime("%Y%m%d")
-    
-    html = generate_html_report(markets, report_date, history, use_clob=use_clob)
-    
+
+    html = generate_html_report(markets, report_date, history)
+
     success = send_document(html, date_str)
     print(f"Document sent: {success}")
 
