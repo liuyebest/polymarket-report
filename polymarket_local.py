@@ -107,10 +107,19 @@ def send_document(html_content, date_str):
 def generate_html_report(markets, report_date, history):
     rd = report_date.strftime("%Y-%m-%d")
     now = datetime.now()
-    
+
+    print(f"Total markets from API: {len(markets)}")
+    filtered_count = 0
+    expired_count = 0
+
     data = []
     for m in markets:
-        if is_filtered(m) or is_expired(m.get('endDate')): continue
+        if is_filtered(m):
+            filtered_count += 1
+            continue
+        if is_expired(m.get('endDate')):
+            expired_count += 1
+            continue
         try:
             prices = m.get('outcomePrices', [])
             price = float(prices[0]) if prices else 0
@@ -130,7 +139,11 @@ def generate_html_report(markets, report_date, history):
                 'comparing': changes['comparing_time']
             })
         except: continue
-    
+
+    print(f"Filtered by category: {filtered_count}")
+    print(f"Expired: {expired_count}")
+    print(f"Valid markets in data: {len(data)}")
+
     new_history = {}
     for m in markets:
         if is_filtered(m) or is_expired(m.get('endDate')): continue
@@ -197,40 +210,56 @@ td{{padding:10px 8px;border-bottom:1px solid rgba(255,255,255,0.05);font-size:13
 </div>
 '''
 
-    def build_table(rows, title, rise=True):
+    def build_table(rows, title, rise=True, show_change=True):
         nonlocal html
         html += f'''<div class="section">
-<h2>{'📈' if rise else '📉'} {title}</h2>
-<table><tr><th>#</th><th>Event</th><th>Current</th><th>24h Δ</th><th>7d Δ</th><th>End</th><th>24h Vol</th><th>Total Vol</th></tr>'''
+<h2>{'📈' if rise else '📉'} {title} <span class="badge">Top 20</span></h2>
+<table><tr><th>#</th><th>Event</th><th>Current</th><th>24h Δ</th><th>7d Δ</th><th>End Date</th><th>24h Vol</th><th>Total Vol</th></tr>'''
         for i, x in enumerate(rows[:20], 1):
             pc = 'high' if x['p']>0.6 else 'mid' if x['p']>0.3 else 'low'
-            c24 = x['change_24h']*100; c7 = x['change_7d']*100
-            html += f"<tr><td class='rank'>{i}</td><td class='title'>{x['q']}</td><td><span class='prob {pc}'>{format_pct(x['p'])}</span></td><td class={'up' if c24>=0 else 'down'}>{'+' if c24>=0 else ''}{c24:.1f}%</td><td class={'up' if c7>=0 else 'down'}>{'+' if c7>=0 else ''}{c7:.1f}%</td><td>{format_end(x['e'])}</td><td class='vol'>{format_vol(x['v24'])}</td><td class='vol'>{format_vol(x['vt'])}</td></tr>"
+            change_24h = x['change_24h'] * 100
+            change_7d = x['change_7d'] * 100
+            
+            delta_24h = f"+{change_24h:.1f}%" if change_24h >= 0 else f"{change_24h:.1f}%"
+            delta_7d = f"+{change_7d:.1f}%" if change_7d >= 0 else f"{change_7d:.1f}%"
+            cls_24h = 'up' if change_24h >= 0 else 'down'
+            cls_7d = 'up' if change_7d >= 0 else 'down'
+            
+            html += f'''<tr>
+<td class='rank'>{i}</td>
+<td><div class='title'>{x['q']}</div><div class='cat'>{x['c']}</div></td>
+<td><span class='prob {pc}'>{format_pct(x['p'])}</span></td>
+<td class='{cls_24h}'>{delta_24h}</td>
+<td class='{cls_7d}'>{delta_7d}</td>
+<td class='date'>{format_end(x['e'])}</td>
+<td class='vol'>{format_vol(x['v24'])}</td>
+<td class='vol'>{format_vol(x['vt'])}</td>
+</tr>'''
         html += '</table></div>'
     
-    build_table(by_rise, "Top Probability Rise (24h)")
-    build_table(by_fall, "Top Probability Fall (24h)", False)
-    build_table(by_vt, "Top Total Volume (Historical)")
-    build_table(by_v24, "Top 24h Volume")
-    build_table(by_future, "Top Future High Probability (7d-1y)")
+    build_table(by_rise, "Top Probability Rise", True)
+    build_table(by_fall, "Top Probability Fall", False)
+    build_table(by_vt, "Top Total Volume (Historical)", True)
+    build_table(by_v24, "Top 24h Volume", True)
+    build_table(by_future, "Top Future High Probability (7d-1y)", True)
     
-    return html + '</div></body></html>'
+    html += f'''
+<footer style="text-align:center;padding:20px;color:#666;font-size:12px">
+<p>Generated: {rd} 08:00 Beijing</p>
+<p>Comparing time: Absolute value change | {by_rise[0]['comparing_time'] if by_rise else 'N/A'}</p>
+</footer>
+</div>
+</body>
+</html>'''
+
+    return html
 
 def main():
     print(f"Running at {datetime.now()}")
-    print(f"TELEGRAM_TOKEN set: {bool(TELEGRAM_TOKEN)}")
-    print(f"TELEGRAM_CHAT_ID set: {bool(TELEGRAM_CHAT_ID)}")
-    print("All environment variables:")
-    for key, value in os.environ.items():
-        if 'TELEGRAM' in key.upper():
-            print(f"  {key}: {'***' if 'TOKEN' in key.upper() else value}")
-
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("ERROR: TELEGRAM_TOKEN or TELEGRAM_CHAT_ID is missing!")
-        return
-
+    
     history = load_history()
     print(f"Loaded history: {len(history)} markets")
+    
     markets = get_markets()
     print(f"Got {len(markets)} markets")
     
