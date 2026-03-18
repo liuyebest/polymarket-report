@@ -16,32 +16,59 @@ HISTORY_FILE = "market_history.json"
 # 白名单:只包含这些主题的市场
 # 如果市场不包含这些关键词,将被过滤掉
 ALLOWED_KEYWORDS = [
-    # 政治
+    # 政治/地缘政治
     'trump', 'biden', 'election', 'president', 'congress', 'senate', 'political', 'politics',
-    'government', 'war', 'ukraine', 'russia', 'china', 'geopolitics', 'policy',
-    # 金融/经济
-    'crypto', 'bitcoin', 'eth', 'ethereum', 'btc', 'inflation', 'fed', 'interest rate',
-    'recession', 'stock', 'market', 'financial', 'economy', 'bank', 'finance', 'trading',
-    'gdp', 'economy', 'treasury', 'federal reserve', 'inflation', 'deflation',
+    'government', 'democrat', 'republican', 'vote', 'campaign', 'candidate', 'ballot',
+    'war', 'ukraine', 'russia', 'china', 'taiwan', 'israel', 'palestine', 'hamas', 'iran',
+    'syria', 'north korea', 'geopolitics', 'policy', 'sanction', 'conflict', 'military',
+    'tension', 'diplomatic', 'border', 'trade war', 'nuclear', 'missile', 'attack', 'invasion',
+    # 金融/经济/市场
+    'crypto', 'bitcoin', 'btc', 'eth', 'ethereum', 'solana', 'doge', 'altcoin', 'defi',
+    'blockchain', 'nft', 'web3', 'token', 'coin', 'cryptocurrency', 'exchange',
+    'inflation', 'fed', 'interest rate', 'federal reserve', 'recession', 'economy',
+    'stock', 'market', 's&p 500', 'nasdaq', 'dow', 'wall street', 'financial', 'finance',
+    'trading', 'invest', 'investment', 'fund', 'etf', 'dividend', 'bond', 'treasury',
+    'gdp', 'economic', 'bank', 'credit', 'debt', 'loan', 'banking', 'crash', 'bull', 'bear',
+    'forex', 'currency', 'dollar', 'euro', 'yen', 'yuan', 'commodity', 'gold', 'silver', 'oil',
     # 科技
     'tech', 'technology', 'ai', 'artificial intelligence', 'gpt', 'chatgpt', 'llm',
     'apple', 'google', 'microsoft', 'nvidia', 'tesla', 'spacex', 'elon', 'startup',
-    'openai', 'anthropic', 'meta', 'amazon', 'software', 'internet', 'cyber'
+    'openai', 'anthropic', 'meta', 'amazon', 'software', 'internet', 'cyber',
+    # 突发事件/灾难
+    'earthquake', 'tsunami', 'hurricane', 'tornado', 'flood', 'wildfire', 'disaster',
+    'pandemic', 'virus', 'disease', 'outbreak', 'epidemic', 'covid', 'monkeypox',
+    'terrorism', 'terror', 'bomb', 'explosion', 'attack', 'shooting', 'violence',
+    'protest', 'riot', 'revolution', 'coup', 'unrest', 'crisis', 'emergency',
+    # 社会议题
+    'climate', 'environment', 'global warming', 'carbon', 'emission', 'weather',
+    'immigration', 'migration', 'refugee', 'asylum', 'border',
+    'crime', 'corruption', 'scandal', 'fraud', 'lawsuit', 'legal', 'court', 'supreme court',
+    'abortion', 'healthcare', 'health', 'vaccine', 'drug', 'medical', 'pharmaceutical'
 ]
 
 # 黑名单:排除这些内容
 EXCLUDED = [
-    # 体育
+    # 体育赛事/比赛
     'world cup', 'football', 'soccer', 'nba', 'nfl', 'nhl', 'mlb', 'ufc',
     'tennis', 'golf', 'boxing', 'mma', 'olympics', 'super bowl', 'nascar',
     'formula 1', 'f1', 'fifa', 'champions league', 'premier league',
-    # 游戏/娱乐
-    'game', 'gaming', 'esports', 'lol', 'dota', 'csgo', 'valorant', 'playstation',
-    'xbox', 'nintendo', 'switch', 'movie', 'film', 'album', 'song', 'concert',
-    'music', 'entertainment', 'actor', 'actress', 'celebrity', 'awards', 'oscar',
-    'grammy', 'festival', 'concert', 'tour', 'band', 'artist', 'spotify', 'netflix',
-    # 其他
-    'gta', 'grand theft auto', 'call of duty', 'fortnite', 'minecraft'
+    'nba finals', 'world series', 'stanley cup', 'championship', 'tournament',
+    'match', 'game', 'team', 'player', 'coach', 'score', 'win', 'lose', 'winner',
+    'finals', 'quarterfinal', 'semifinal', 'bracket', 'season', 'league',
+    # 游戏/电竞
+    'gaming', 'esports', 'lol', 'dota', 'csgo', 'valorant', 'playstation',
+    'xbox', 'nintendo', 'switch', 'game', 'video game', 'gamer', 'stream',
+    'e-sports', 'esport', 'tournament game', 'gta', 'grand theft auto',
+    'call of duty', 'fortnite', 'minecraft', 'roblox', 'pubg', 'overwatch',
+    # 娱乐/电影/音乐
+    'movie', 'film', 'album', 'song', 'concert', 'music', 'entertainment',
+    'actor', 'actress', 'celebrity', 'awards', 'oscar', 'grammy', 'emmy',
+    'festival', 'tour', 'band', 'artist', 'spotify', 'netflix', 'disney',
+    'hulu', 'hbo', 'prime video', 'streaming', 'tv show', 'series',
+    'box office', 'release', 'premiere', 'director', 'producer',
+    # 其他娱乐内容
+    'social media', 'influencer', 'tiktok', 'instagram', 'youtube',
+    'viral', 'trending', 'meme', 'vlog', 'podcast', 'channel'
 ]
 
 def get_markets():
@@ -215,7 +242,7 @@ def generate_html_report(markets, report_date, history):
             changes = calculate_changes(price, history.get(market_id, {}))
 
             data.append({
-                'q': m.get('question','')[:70],
+                'q': m.get('question',''),
                 'c': m.get('category',''),
                 'e': m.get('endDate',''),
                 'p': price,
@@ -295,7 +322,7 @@ def generate_html_report(markets, report_date, history):
 <meta charset="UTF-8">
 <style>
 body{{font-family:sans-serif;background:#1a1a2e;color:#e4e4e4;padding:10px}}
-.container{{max-width:800px;margin:0 auto}}
+.container{{max-width:900px;margin:0 auto}}
 h1{{color:#00d4ff;text-align:center;padding:10px 0}}
 .info{{text-align:center;gap:10px;display:flex;justify-content:center;margin:10px 0}}
 .info span{{background:#1e3a5a;padding:5px 10px;border-radius:5px}}
@@ -304,10 +331,10 @@ h1{{color:#00d4ff;text-align:center;padding:10px 0}}
 .section h2{{color:#fff;margin:0 0 10px 0}}
 table{{width:100%;border-collapse:collapse;font-size:12px}}
 th{{background:#1e3a5a;color:#00d4ff;padding:5px;text-align:left}}
-td{{padding:5px;border-bottom:1px solid #333}}
-.rank{{color:#00d4ff;font-weight:bold;text-align:center}}
-.title{{color:#fff;max-width:300px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
-.cat{{color:#888;font-size:10px}}
+td{{padding:8px;border-bottom:1px solid #333;vertical-align:top}}
+.rank{{color:#00d4ff;font-weight:bold;text-align:center;width:30px}}
+.title{{color:#fff;font-size:13px;line-height:1.4;max-width:350px;word-wrap:break-word;word-break:break-word}}
+.cat{{color:#888;font-size:10px;margin-top:3px}}
 .prob{{padding:2px 6px;border-radius:3px;font-weight:bold}}
 .high{{background:#004d26;color:#00ff88}}
 .mid{{background:#4d3d00;color:#ffc107}}
@@ -315,7 +342,7 @@ td{{padding:5px;border-bottom:1px solid #333}}
 .up{{color:#00ff88}}
 .down{{color:#ff5252}}
 .vol{{color:#ffc107}}
-.date{{color:#888}}
+.date{{color:#888;font-size:11px}}
 </style>
 </head>
 <body>
@@ -347,7 +374,7 @@ td{{padding:5px;border-bottom:1px solid #333}}
 
             html += f'''<tr>
 <td class='rank'>{i}</td>
-<td><div class='title'>{x['q']}</div><div class='cat'>{x['c']}</div></td>
+<td><div class='title' title="{x['q']}">{x['q']}</div><div class='cat'>{x['c']}</div></td>
 <td><span class='prob {pc}'>{format_pct(x['p'])}</span></td>
 <td class='{cls_24h}'>{delta_24h}</td>
 <td class='{cls_7d}'>{delta_7d}</td>
