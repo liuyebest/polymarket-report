@@ -8,6 +8,7 @@ import json
 # ============= 配置 =============
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+
 HISTORY_FILE = "market_history.json"
 
 EXCLUDED = ['sports','entertainment','pop-culture','esports','nba','nfl','nhl','mlb','ufc','soccer','football','tennis','golf','boxing','mma','movie','album','song','concert','festival','oscar','grammy','super bowl','lol','dota','csgo','valorant','gta','video game','gaming','playstation','xbox','nintendo']
