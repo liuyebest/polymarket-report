@@ -1,9 +1,10 @@
-name: Polymarket Daily Report
+name: Polymarket Daily Report  # v2
 
 on:
   schedule:
     - cron: '0 0 * * *'
   workflow_dispatch:
+
 
 jobs:
   report:
