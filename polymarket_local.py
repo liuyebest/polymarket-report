@@ -1,5 +1,5 @@
-# Polymarket 每日报告 - 平衡版
-# 减少选举内容的过度集中,增加多样性
+# Polymarket 每日报告 - 最终平衡版 + Telegram 集成
+# 使用 Gamma API + 平衡过滤策略 + Telegram 自动发送
 
 import requests
 from datetime import datetime, timedelta
@@ -7,10 +7,12 @@ import os
 import json
 
 # ============= 配置 =============
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+
 HISTORY_FILE = "market_history.json"
 
 # ============= 过滤配置 =============
-# 设为False,不强制匹配白名单
 USE_WHITELIST = False
 
 # ============= 黑名单关键词 =============
@@ -23,7 +25,7 @@ EXCLUDED = [
     # 体育俱乐部
     'borussia dortmund', 'napoli', 'manchester', 'chelsea', 'arsenal', 'liverpool',
     'real madrid', 'barcelona', 'bayern munich', 'psg', 'juventus', 'inter milan',
-    'ac milan', 'bundesliga', 'serie a', 'la liga', 'premier league',
+    'ac milan', 'bundesliga', 'serie a', 'la liga',
     # 游戏/电竞
     'gaming', 'esports', 'lol', 'dota', 'csgo', 'valorant', 'playstation',
     'xbox', 'nintendo', 'switch', 'video game', 'gamer', 'stream',
@@ -185,6 +187,44 @@ def calculate_changes(current_price, history):
 
     return changes
 
+# ============= Telegram 发送 =============
+def send_telegram(text):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    data = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}
+    r = requests.post(url, json=data, timeout=30)
+    return r.json().get('ok', False)
+
+def send_document(html_content, date_str, max_retries=3):
+    filename = f"polymarket_report_{date_str}.html"
+
+    with open(filename, 'w', encoding='utf-8') as f:
+        f.write(html_content)
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
+
+    for attempt in range(max_retries):
+        try:
+            with open(filename, 'rb') as f:
+                files = {'document': (filename, f, 'text/html')}
+                data = {'chat_id': TELEGRAM_CHAT_ID, 'caption': f"Polymarket Daily Report - {date_str}"}
+                r = requests.post(url, data=data, files=files, timeout=(30, 120))
+
+            print(f"Telegram API Response: {r.status_code}")
+            return r.json().get('ok', False)
+
+        except requests.exceptions.Timeout as e:
+            print(f"Timeout on attempt {attempt + 1}/{max_retries}: {e}")
+            if attempt < max_retries - 1:
+                import time
+                time.sleep(5)
+            else:
+                return False
+        except Exception as e:
+            print(f"Error sending document: {e}")
+            return False
+
+    return False
+
 # ============= 报告生成 =============
 def generate_html_report(markets, report_date, history):
     rd = report_date.strftime("%Y-%m-%d")
@@ -319,7 +359,6 @@ td{{padding:8px;border-bottom:1px solid #333;vertical-align:top}}
 .down{{color:#ff5252}}
 .vol{{color:#ffc107}}
 .date{{color:#888;font-size:11px}}
-.priority{{color:#888;font-size:9px}}
 </style>
 </head>
 <body>
@@ -327,7 +366,7 @@ td{{padding:8px;border-bottom:1px solid #333;vertical-align:top}}
 <h1>Polymarket Daily Report - {rd}</h1>
 <div class="info">
 <span>Date: {rd}</span>
-<span>Beijing Time: {now.strftime('%H:%M')}</span>
+<span>Beijing Time: 08:00</span>
 </div>
 <div class="note">
 Filtered: Sports/Gaming/Entertainment | Valid Markets: {len(data)} | Comparing: {by_rise[0]['comparing_time'] if by_rise else 'No historical data'}
@@ -370,7 +409,7 @@ Filtered: Sports/Gaming/Entertainment | Valid Markets: {len(data)} | Comparing: 
 
     html += f'''
 <footer style="text-align:center;padding:10px;color:#666;font-size:10px">
-<p>Generated: {rd} {now.strftime('%H:%M')} | API: Gamma API | {by_rise[0]['comparing_time'] if by_rise else 'N/A'}</p>
+<p>Generated: {rd} | API: Gamma API | {by_rise[0]['comparing_time'] if by_rise else 'N/A'}</p>
 </footer>
 </div>
 </body>
@@ -381,6 +420,13 @@ Filtered: Sports/Gaming/Entertainment | Valid Markets: {len(data)} | Comparing: 
 # ============= 主函数 =============
 def main():
     print(f"Running at {datetime.now()}")
+
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        print("ERROR: TELEGRAM_TOKEN or TELEGRAM_CHAT_ID is missing!")
+        print("Please set environment variables:")
+        print("  export TELEGRAM_TOKEN='your_bot_token'")
+        print("  export TELEGRAM_CHAT_ID='your_chat_id'")
+        return
 
     history = load_history()
     print(f"Loaded history: {len(history)} markets")
@@ -393,12 +439,8 @@ def main():
 
     html = generate_html_report(markets, report_date, history)
 
-    # 保存HTML文件
-    filename = f"polymarket_report_{date_str}.html"
-    with open(filename, 'w', encoding='utf-8') as f:
-        f.write(html)
-
-    print(f"\nReport generated successfully: {filename}")
+    success = send_document(html, date_str)
+    print(f"Document sent: {success}")
 
 if __name__ == "__main__":
     main()
