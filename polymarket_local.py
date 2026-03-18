@@ -133,7 +133,13 @@ def generate_html_report(markets, report_date, history):
             continue
         try:
             prices = m.get('outcomePrices', [])
-            price = float(prices[0]) if prices else 0
+            # 处理 prices 可能是字符串化的数组的情况
+            if isinstance(prices, str):
+                try:
+                    prices = json.loads(prices)
+                except:
+                    prices = []
+            price = float(prices[0]) if prices and len(prices) > 0 else 0
             market_id = m.get('id', m.get('conditionId', ''))
 
             changes = calculate_changes(price, history.get(market_id, {}))
@@ -170,7 +176,13 @@ def generate_html_report(markets, report_date, history):
         try:
             market_id = m.get('id', m.get('conditionId', ''))
             prices = m.get('outcomePrices', [])
-            price = float(prices[0]) if prices else 0
+            # 处理 prices 可能是字符串化的数组的情况
+            if isinstance(prices, str):
+                try:
+                    prices = json.loads(prices)
+                except:
+                    prices = []
+            price = float(prices[0]) if prices and len(prices) > 0 else 0
             new_history[market_id] = {
                 'price_24h': price,
                 'price_7d': price,
@@ -317,3 +329,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
