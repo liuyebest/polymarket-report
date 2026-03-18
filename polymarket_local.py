@@ -1,5 +1,5 @@
-# Polymarket 每日报告 - 最终版
-# 使用 Gamma API + 官方分类 + 关键词过滤
+# Polymarket 每日报告 - 修复版
+# 放宽过滤条件,获取更多数据
 
 import requests
 from datetime import datetime, timedelta
@@ -7,54 +7,11 @@ import os
 import json
 
 # ============= 配置 =============
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-
 HISTORY_FILE = "market_history.json"
 
-# ============= 用户选择的分类 =============
-# 保留的分类
-KEEP_CATEGORIES = {
-    'politics': True,
-    'economy': True,
-    'finance': True,
-    'crypto': True,
-    'tech': True,
-    'mentions': True,
-    'other': True,
-}
-# 排除的分类
-EXCLUDE_CATEGORIES = {
-    'sports': True,
-    'culture': True,
-    'climate-science': True,
-}
-
-# ============= 白名单关键词 =============
-ALLOWED_KEYWORDS = [
-    # 政治/选举
-    'trump', 'biden', 'election', 'president', 'congress', 'senate', 'political', 'politics',
-    'government', 'democrat', 'republican', 'vote', 'campaign', 'candidate', 'ballot',
-    'kamala', 'harris', 'donald', 'joe',
-    # 地缘政治
-    'iran', 'israel', 'palestine', 'hamas', 'middle east',
-    'geopolitics', 'policy', 'sanction', 'conflict', 'military',
-    'nuclear', 'missile', 'attack', 'invasion', 'war', 'ukraine', 'russia', 'china', 'taiwan',
-    'tension', 'diplomatic', 'border', 'trade war',
-    # 金融/经济/市场
-    'crypto', 'bitcoin', 'btc', 'eth', 'ethereum', 'solana', 'doge', 'altcoin', 'defi',
-    'blockchain', 'nft', 'web3', 'token', 'coin', 'cryptocurrency', 'exchange',
-    'inflation', 'fed', 'interest rate', 'federal reserve', 'recession', 'economy',
-    'stock', 'market', 's&p 500', 'nasdaq', 'dow', 'wall street', 'financial', 'finance',
-    'trading', 'invest', 'investment', 'fund', 'etf', 'dividend', 'bond', 'treasury',
-    'gdp', 'economic', 'bank', 'credit', 'debt', 'loan', 'banking', 'crash', 'bull', 'bear',
-    'forex', 'currency', 'dollar', 'euro', 'yen', 'yuan', 'commodity', 'gold', 'silver', 'oil',
-    # 科技
-    'tech', 'technology', 'ai', 'artificial intelligence', 'gpt', 'chatgpt', 'llm',
-    'apple', 'google', 'microsoft', 'nvidia', 'tesla', 'spacex', 'elon', 'startup',
-    'openai', 'anthropic', 'meta', 'amazon', 'software', 'internet', 'cyber',
-    'machine learning',
-]
+# ============= 过滤配置 =============
+# 改为:只排除黑名单,不强制要求白名单
+USE_WHITELIST = False  # 设为False,不强制匹配白名单
 
 # ============= 黑名单关键词 =============
 EXCLUDED = [
@@ -63,22 +20,42 @@ EXCLUDED = [
     'tennis', 'golf', 'boxing', 'mma', 'olympics', 'super bowl', 'nascar',
     'formula 1', 'f1', 'fifa', 'champions league', 'premier league',
     'nba finals', 'world series', 'stanley cup', 'championship', 'tournament',
-    'match', 'game', 'team', 'player', 'coach', 'score', 'win', 'lose', 'winner',
-    'finals', 'quarterfinal', 'semifinal', 'bracket', 'season', 'league',
-    'basketball', 'baseball', 'hockey', 'volleyball',
     # 游戏/电竞
     'gaming', 'esports', 'lol', 'dota', 'csgo', 'valorant', 'playstation',
-    'xbox', 'nintendo', 'switch', 'game', 'video game', 'gamer', 'stream',
-    'e-sports', 'esport', 'tournament game', 'pubg', 'overwatch', 'roblox',
+    'xbox', 'nintendo', 'switch', 'video game', 'gamer', 'stream',
+    'e-sports', 'esport', 'pubg', 'overwatch', 'roblox',
     'gta', 'grand theft auto', 'call of duty', 'fortnite', 'minecraft',
-    'league of legends', 'csgo', 'valorant',
+    'league of legends',
     # 娱乐/电影/音乐
     'movie', 'film', 'album', 'song', 'concert', 'music', 'entertainment',
     'actor', 'actress', 'celebrity', 'awards', 'oscar', 'grammy', 'emmy',
     'festival', 'tour', 'band', 'artist', 'spotify', 'netflix', 'disney',
     'hulu', 'hbo', 'prime video', 'streaming', 'tv show', 'series',
     'box office', 'release', 'premiere', 'director', 'producer',
-    'kanye', 'west', 'album', 'singles', 'music video',
+    'kanye', 'west', 'singles', 'music video',
+    'rihanna', 'playboi carti', 'album',
+]
+
+# ============= 白名单关键词(仅用于标注优先级,不过滤) =============
+ALLOWED_KEYWORDS = [
+    'trump', 'biden', 'election', 'president', 'congress', 'senate', 'political', 'politics',
+    'government', 'democrat', 'republican', 'vote', 'campaign', 'candidate', 'ballot',
+    'kamala', 'harris', 'donald', 'joe',
+    'iran', 'israel', 'palestine', 'hamas', 'middle east',
+    'geopolitics', 'policy', 'sanction', 'conflict', 'military',
+    'nuclear', 'missile', 'attack', 'invasion', 'war', 'ukraine', 'russia', 'china', 'taiwan',
+    'tension', 'diplomatic', 'border', 'trade war',
+    'crypto', 'bitcoin', 'btc', 'eth', 'ethereum', 'solana', 'doge', 'altcoin', 'defi',
+    'blockchain', 'nft', 'web3', 'token', 'coin', 'cryptocurrency', 'exchange',
+    'inflation', 'fed', 'interest rate', 'federal reserve', 'recession', 'economy',
+    'stock', 'market', 's&p 500', 'nasdaq', 'dow', 'wall street', 'financial', 'finance',
+    'trading', 'invest', 'investment', 'fund', 'etf', 'dividend', 'bond', 'treasury',
+    'gdp', 'economic', 'bank', 'credit', 'debt', 'loan', 'banking', 'crash', 'bull', 'bear',
+    'forex', 'currency', 'dollar', 'euro', 'yen', 'yuan', 'commodity', 'gold', 'silver', 'oil',
+    'tech', 'technology', 'ai', 'artificial intelligence', 'gpt', 'chatgpt', 'llm',
+    'apple', 'google', 'microsoft', 'nvidia', 'tesla', 'spacex', 'elon', 'startup',
+    'openai', 'anthropic', 'meta', 'amazon', 'software', 'internet', 'cyber',
+    'machine learning',
 ]
 
 # ============= 获取市场数据 =============
@@ -100,9 +77,10 @@ def is_filtered(m):
     if any(kw in text for kw in EXCLUDED):
         return True
 
-    # 白名单:必须包含至少一个允许的关键词
-    if not any(kw in text for kw in ALLOWED_KEYWORDS):
-        return True
+    # 白名单:可选,如果启用则必须包含至少一个允许的关键词
+    if USE_WHITELIST:
+        if not any(kw in text for kw in ALLOWED_KEYWORDS):
+            return True
 
     return False
 
@@ -171,44 +149,6 @@ def calculate_changes(current_price, history):
                 changes["comparing_time"] = "vs 7d ago"
 
     return changes
-
-# ============= Telegram 发送 =============
-def send_telegram(text):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    data = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}
-    r = requests.post(url, json=data, timeout=30)
-    return r.json().get('ok', False)
-
-def send_document(html_content, date_str, max_retries=3):
-    filename = f"polymarket_report_{date_str}.html"
-
-    with open(filename, 'w', encoding='utf-8') as f:
-        f.write(html_content)
-
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
-
-    for attempt in range(max_retries):
-        try:
-            with open(filename, 'rb') as f:
-                files = {'document': (filename, f, 'text/html')}
-                data = {'chat_id': TELEGRAM_CHAT_ID, 'caption': f"Polymarket Daily Report - {date_str}"}
-                r = requests.post(url, data=data, files=files, timeout=(30, 120))
-
-            print(f"Telegram API Response: {r.status_code}")
-            return r.json().get('ok', False)
-
-        except requests.exceptions.Timeout as e:
-            print(f"Timeout on attempt {attempt + 1}/{max_retries}: {e}")
-            if attempt < max_retries - 1:
-                import time
-                time.sleep(5)
-            else:
-                return False
-        except Exception as e:
-            print(f"Error sending document: {e}")
-            return False
-
-    return False
 
 # ============= 报告生成 =============
 def generate_html_report(markets, report_date, history):
@@ -340,7 +280,7 @@ td{{padding:8px;border-bottom:1px solid #333;vertical-align:top}}
 <h1>Polymarket Daily Report - {rd}</h1>
 <div class="info">
 <span>Date: {rd}</span>
-<span>Beijing Time: 08:00</span>
+<span>Beijing Time: {now.strftime('%H:%M')}</span>
 </div>
 <div class="note">
 Filtered: Sports/Gaming/Entertainment | Valid Markets: {len(data)} | Comparing: {by_rise[0]['comparing_time'] if by_rise else 'No historical data'}
@@ -383,7 +323,7 @@ Filtered: Sports/Gaming/Entertainment | Valid Markets: {len(data)} | Comparing: 
 
     html += f'''
 <footer style="text-align:center;padding:10px;color:#666;font-size:10px">
-<p>Generated: {rd} | API: Gamma API | {by_rise[0]['comparing_time'] if by_rise else 'N/A'}</p>
+<p>Generated: {rd} {now.strftime('%H:%M')} | API: Gamma API | {by_rise[0]['comparing_time'] if by_rise else 'N/A'}</p>
 </footer>
 </div>
 </body>
@@ -394,10 +334,6 @@ Filtered: Sports/Gaming/Entertainment | Valid Markets: {len(data)} | Comparing: 
 # ============= 主函数 =============
 def main():
     print(f"Running at {datetime.now()}")
-
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("ERROR: TELEGRAM_TOKEN or TELEGRAM_CHAT_ID is missing!")
-        return
 
     history = load_history()
     print(f"Loaded history: {len(history)} markets")
@@ -410,8 +346,12 @@ def main():
 
     html = generate_html_report(markets, report_date, history)
 
-    success = send_document(html, date_str)
-    print(f"Document sent: {success}")
+    # 保存HTML文件
+    filename = f"polymarket_report_{date_str}.html"
+    with open(filename, 'w', encoding='utf-8') as f:
+        f.write(html)
+
+    print(f"\nReport generated successfully: {filename}")
 
 if __name__ == "__main__":
     main()
