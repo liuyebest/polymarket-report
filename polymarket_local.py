@@ -137,7 +137,8 @@ def generate_html_report(markets, report_date, history):
             if isinstance(prices, str):
                 try:
                     prices = json.loads(prices)
-                except:
+                except Exception as parse_error:
+                    print(f"Failed to parse prices string: {parse_error}, prices value: {prices[:100]}")
                     prices = []
             price = float(prices[0]) if prices and len(prices) > 0 else 0
             market_id = m.get('id', m.get('conditionId', ''))
@@ -153,11 +154,12 @@ def generate_html_report(markets, report_date, history):
                 'vt': float(m.get('volume') or 0),
                 'change_24h': changes['change_24h_abs'],
                 'change_7d': changes['change_7d_abs'],
-                'comparing': changes['comparing_time']
+                'comparing_time': changes['comparing_time']
             })
         except Exception as e:
             error_count += 1
-            print(f"Error processing market: {e}")
+            print(f"Error processing market {m.get('id', 'unknown')}: {e}")
+            print(f"Market data - question: {m.get('question', 'N/A')[:50]}, outcomePrices: {m.get('outcomePrices', 'N/A')[:100]}")
             continue
 
     print(f"Filtered by category: {filtered_count}")
