@@ -124,6 +124,13 @@ def generate_html_report(markets, report_date, history):
     # 处理数据
     data = []
     error_count = 0
+
+    # 打印前 5 个市场的分类信息用于调试
+    print("\n=== Sample markets for debugging ===")
+    for i, m in enumerate(markets[:5]):
+        print(f"Market {i}: category='{m.get('category', '')}', question='{m.get('question', '')[:50]}...'")
+    print("=== End sample ===\n")
+
     for m in markets:
         if is_filtered(m):
             filtered_count += 1
@@ -171,8 +178,8 @@ def generate_html_report(markets, report_date, history):
     if data:
         print(f"Sample valid market: {data[0]}")
 
-    # 更新历史数据
-    new_history = {}
+    # 更新历史数据 - 保留现有数据,只更新当前价格
+    new_history = history.copy()  # 先复制历史数据
     for m in markets:
         if is_filtered(m) or is_expired(m.get('endDate')): continue
         try:
@@ -185,21 +192,31 @@ def generate_html_report(markets, report_date, history):
                 except:
                     prices = []
             price = float(prices[0]) if prices and len(prices) > 0 else 0
-            new_history[market_id] = {
-                'price_24h': price,
-                'price_7d': price,
-                'timestamp': now.isoformat()
-            }
+
+            # 如果市场已存在于历史数据中,更新价格
+            if market_id in new_history:
+                # 将旧的 7d 数据传递下去
+                new_history[market_id]['price_7d'] = new_history[market_id].get('price_24h', price)
+                # 更新 24h 价格为当前价格
+                new_history[market_id]['price_24h'] = price
+                new_history[market_id]['timestamp'] = now.isoformat()
+            else:
+                # 新市场,初始化
+                new_history[market_id] = {
+                    'price_24h': price,
+                    'price_7d': price,
+                    'timestamp': now.isoformat()
+                }
         except: continue
     save_history(new_history)
 
-    # 排序
-    by_rise = sorted(data, key=lambda x: x['change_24h'], reverse=True)[:20]
-    by_fall = sorted(data, key=lambda x: x['change_24h'])[:20]
-    by_vt = sorted(data, key=lambda x: x['vt'], reverse=True)[:20]
-    by_v24 = sorted(data, key=lambda x: x['v24'], reverse=True)[:20]
-    by_future = [x for x in data if is_within_range(x['e'])][:20]
-    by_future = sorted(by_future, key=lambda x: x['p'], reverse=True)[:20]
+    # 排序 - Top10
+    by_rise = sorted(data, key=lambda x: x['change_24h'], reverse=True)[:10]
+    by_fall = sorted(data, key=lambda x: x['change_24h'])[:10]
+    by_vt = sorted(data, key=lambda x: x['vt'], reverse=True)[:10]
+    by_v24 = sorted(data, key=lambda x: x['v24'], reverse=True)[:10]
+    by_future = [x for x in data if is_within_range(x['e'])][:10]
+    by_future = sorted(by_future, key=lambda x: x['p'], reverse=True)[:10]
 
     # 生成HTML
     html = f'''<!DOCTYPE html>
@@ -249,9 +266,9 @@ td{{padding:10px 8px;border-bottom:1px solid rgba(255,255,255,0.05);font-size:13
     def build_table(rows, title, rise=True, show_change=True):
         nonlocal html
         html += f'''<div class="section">
-<h2>{'📈' if rise else '📉'} {title} <span class="badge">Top 20</span></h2>
+<h2>{'📈' if rise else '📉'} {title} <span class="badge">Top 10</span></h2>
 <table><tr><th>#</th><th>Event</th><th>Current</th><th>24h Δ</th><th>7d Δ</th><th>End Date</th><th>24h Vol</th><th>Total Vol</th></tr>'''
-        for i, x in enumerate(rows[:20], 1):
+        for i, x in enumerate(rows[:10], 1):
             pc = 'high' if x['p']>0.6 else 'mid' if x['p']>0.3 else 'low'
             change_24h = x['change_24h'] * 100
             change_7d = x['change_7d'] * 100
