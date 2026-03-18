@@ -13,7 +13,36 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 # 历史数据存储文件
 HISTORY_FILE = "market_history.json"
 
-EXCLUDED = ['sports','entertainment','pop-culture','esports','nba','nfl','nhl','mlb','ufc','soccer','football','tennis','golf','boxing','mma','movie','album','song','concert','festival','oscar','grammy','super bowl','lol','dota','csgo','valorant','gta','video game','gaming','playstation','xbox','nintendo']
+# 白名单:只包含这些主题的市场
+# 如果市场不包含这些关键词,将被过滤掉
+ALLOWED_KEYWORDS = [
+    # 政治
+    'trump', 'biden', 'election', 'president', 'congress', 'senate', 'political', 'politics',
+    'government', 'war', 'ukraine', 'russia', 'china', 'geopolitics', 'policy',
+    # 金融/经济
+    'crypto', 'bitcoin', 'eth', 'ethereum', 'btc', 'inflation', 'fed', 'interest rate',
+    'recession', 'stock', 'market', 'financial', 'economy', 'bank', 'finance', 'trading',
+    'gdp', 'economy', 'treasury', 'federal reserve', 'inflation', 'deflation',
+    # 科技
+    'tech', 'technology', 'ai', 'artificial intelligence', 'gpt', 'chatgpt', 'llm',
+    'apple', 'google', 'microsoft', 'nvidia', 'tesla', 'spacex', 'elon', 'startup',
+    'openai', 'anthropic', 'meta', 'amazon', 'software', 'internet', 'cyber'
+]
+
+# 黑名单:排除这些内容
+EXCLUDED = [
+    # 体育
+    'world cup', 'football', 'soccer', 'nba', 'nfl', 'nhl', 'mlb', 'ufc',
+    'tennis', 'golf', 'boxing', 'mma', 'olympics', 'super bowl', 'nascar',
+    'formula 1', 'f1', 'fifa', 'champions league', 'premier league',
+    # 游戏/娱乐
+    'game', 'gaming', 'esports', 'lol', 'dota', 'csgo', 'valorant', 'playstation',
+    'xbox', 'nintendo', 'switch', 'movie', 'film', 'album', 'song', 'concert',
+    'music', 'entertainment', 'actor', 'actress', 'celebrity', 'awards', 'oscar',
+    'grammy', 'festival', 'concert', 'tour', 'band', 'artist', 'spotify', 'netflix',
+    # 其他
+    'gta', 'grand theft auto', 'call of duty', 'fortnite', 'minecraft'
+]
 
 def get_markets():
     url = "https://gamma-api.polymarket.com/markets?closed=false&limit=500"
@@ -22,10 +51,18 @@ def get_markets():
 
 def is_filtered(m):
     question = m.get('question', '').lower()
-    # 如果 category 为空或 None,忽略它
     category = m.get('category', '').lower() if m.get('category') else ''
     text = question + ' ' + category
-    return any(kw in text for kw in EXCLUDED)
+
+    # 黑名单:如果包含排除的关键词,直接过滤
+    if any(kw in text for kw in EXCLUDED):
+        return True
+
+    # 白名单:必须包含至少一个允许的关键词
+    if not any(kw in text for kw in ALLOWED_KEYWORDS):
+        return True
+
+    return False
 
 def is_expired(end_date):
     if not end_date: return False
@@ -61,9 +98,11 @@ def load_history():
 def save_history(data):
     """保存历史数据"""
     try:
-        with open(HISTORY_FILE, 'w') as f:
-            json.dump(data, f)
-    except: pass
+        with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"Error saving history: {e}")
+        pass
 
 def calculate_changes(current_price, history):
     """计算概率变化"""
@@ -201,8 +240,11 @@ def generate_html_report(markets, report_date, history):
     if data:
         print(f"Sample valid market: {data[0]}")
 
-    # 更新历史数据 - 保留现有数据,只更新当前价格
-    new_history = history.copy()  # 先复制历史数据
+    # 更新历史数据 - 保留现有数据,正确更新价格
+    new_history = history.copy()
+    updated_count = 0
+    new_markets_count = 0
+
     for m in markets:
         if is_filtered(m) or is_expired(m.get('endDate')): continue
         try:
@@ -216,21 +258,26 @@ def generate_html_report(markets, report_date, history):
                     prices = []
             price = float(prices[0]) if prices and len(prices) > 0 else 0
 
-            # 如果市场已存在于历史数据中,更新价格
             if market_id in new_history:
-                # 将旧的 7d 数据传递下去
-                new_history[market_id]['price_7d'] = new_history[market_id].get('price_24h', price)
-                # 更新 24h 价格为当前价格
+                # 已存在的市场:更新价格,保留旧的7d数据作为新的7d数据
+                old_24h = new_history[market_id].get('price_24h', price)
+                new_history[market_id]['price_7d'] = old_24h
                 new_history[market_id]['price_24h'] = price
                 new_history[market_id]['timestamp'] = now.isoformat()
+                updated_count += 1
             else:
-                # 新市场,初始化
+                # 新市场:初始化
                 new_history[market_id] = {
                     'price_24h': price,
                     'price_7d': price,
                     'timestamp': now.isoformat()
                 }
-        except: continue
+                new_markets_count += 1
+        except Exception as e:
+            print(f"Error updating history for market {m.get('id', 'unknown')}: {e}")
+            continue
+
+    print(f"History updated: {updated_count} existing, {new_markets_count} new markets")
     save_history(new_history)
 
     # 排序 - Top10
@@ -346,6 +393,15 @@ def main():
 
     history = load_history()
     print(f"Loaded history: {len(history)} markets")
+
+    # 打印历史数据样本
+    if history:
+        sample_ids = list(history.keys())[:3]
+        print(f"Sample history entries:")
+        for mid in sample_ids:
+            print(f"  {mid}: 24h={history[mid].get('price_24h')}, 7d={history[mid].get('price_7d')}")
+    else:
+        print("No history data found (first run)")
 
     markets = get_markets()
     print(f"Got {len(markets)} markets")
