@@ -31,6 +31,7 @@ def is_expired(end_date):
     except: return False
 
 def is_within_range(end_date, days_min=7, days_max=365):
+    """检查日期是否在未来一周到一年之间"""
     if not end_date: return False
     try:
         d = end_date.replace('Z','').split('+')[0]
@@ -45,6 +46,7 @@ def format_pct(p): return f"{float(p or 0)*100:.1f}%" if p else "N/A"
 def format_end(d): return d[:10] if d else "N/A"
 
 def load_history():
+    """加载历史数据"""
     try:
         if os.path.exists(HISTORY_FILE):
             with open(HISTORY_FILE, 'r') as f:
@@ -53,12 +55,14 @@ def load_history():
     return {}
 
 def save_history(data):
+    """保存历史数据"""
     try:
         with open(HISTORY_FILE, 'w') as f:
             json.dump(data, f)
     except: pass
 
 def calculate_changes(current_price, history):
+    """计算概率变化"""
     changes = {
         "change_24h_abs": 0,
         "change_7d_abs": 0,
@@ -66,7 +70,7 @@ def calculate_changes(current_price, history):
         "change_7d_pct": 0,
         "comparing_time": "No historical data"
     }
-    
+
     if history:
         h = history
         if 'price_24h' in h and h['price_24h']:
@@ -78,7 +82,7 @@ def calculate_changes(current_price, history):
                 changes["comparing_time"] = "vs 24h & 7d ago"
             else:
                 changes["comparing_time"] = "vs 7d ago"
-    
+
     return changes
 
 def send_telegram(text):
@@ -88,17 +92,21 @@ def send_telegram(text):
     return r.json().get('ok', False)
 
 def send_document(html_content, date_str):
+    """发送HTML文件到Telegram"""
     filename = f"polymarket_report_{date_str}.html"
-    
+
+    # 保存HTML文件
     with open(filename, 'w', encoding='utf-8') as f:
         f.write(html_content)
-    
+
+    # 发送到Telegram
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
     with open(filename, 'rb') as f:
         files = {'document': (filename, f, 'text/html')}
         data = {'chat_id': TELEGRAM_CHAT_ID, 'caption': f"📊 Polymarket Daily Report - {date_str}"}
         r = requests.post(url, data=data, files=files, timeout=60)
 
+    # 打印详细响应用于调试
     print(f"Telegram API Response: {r.status_code}")
     print(f"Response body: {r.text}")
 
@@ -108,11 +116,14 @@ def generate_html_report(markets, report_date, history):
     rd = report_date.strftime("%Y-%m-%d")
     now = datetime.now()
 
+    # 调试：打印总数据量
     print(f"Total markets from API: {len(markets)}")
     filtered_count = 0
     expired_count = 0
 
+    # 处理数据
     data = []
+    error_count = 0
     for m in markets:
         if is_filtered(m):
             filtered_count += 1
@@ -124,9 +135,9 @@ def generate_html_report(markets, report_date, history):
             prices = m.get('outcomePrices', [])
             price = float(prices[0]) if prices else 0
             market_id = m.get('id', m.get('conditionId', ''))
-            
+
             changes = calculate_changes(price, history.get(market_id, {}))
-            
+
             data.append({
                 'q': m.get('question','')[:70],
                 'c': m.get('category',''),
@@ -138,12 +149,21 @@ def generate_html_report(markets, report_date, history):
                 'change_7d': changes['change_7d_abs'],
                 'comparing': changes['comparing_time']
             })
-        except: continue
+        except Exception as e:
+            error_count += 1
+            print(f"Error processing market: {e}")
+            continue
 
     print(f"Filtered by category: {filtered_count}")
     print(f"Expired: {expired_count}")
+    print(f"Errors during processing: {error_count}")
     print(f"Valid markets in data: {len(data)}")
 
+    # 打印第一个有效市场作为样本
+    if data:
+        print(f"Sample valid market: {data[0]}")
+
+    # 更新历史数据
     new_history = {}
     for m in markets:
         if is_filtered(m) or is_expired(m.get('endDate')): continue
@@ -158,14 +178,16 @@ def generate_html_report(markets, report_date, history):
             }
         except: continue
     save_history(new_history)
-    
+
+    # 排序
     by_rise = sorted(data, key=lambda x: x['change_24h'], reverse=True)[:20]
     by_fall = sorted(data, key=lambda x: x['change_24h'])[:20]
     by_vt = sorted(data, key=lambda x: x['vt'], reverse=True)[:20]
     by_v24 = sorted(data, key=lambda x: x['v24'], reverse=True)[:20]
     by_future = [x for x in data if is_within_range(x['e'])][:20]
     by_future = sorted(by_future, key=lambda x: x['p'], reverse=True)[:20]
-    
+
+    # 生成HTML
     html = f'''<!DOCTYPE html>
 <html>
 <head>
@@ -219,12 +241,12 @@ td{{padding:10px 8px;border-bottom:1px solid rgba(255,255,255,0.05);font-size:13
             pc = 'high' if x['p']>0.6 else 'mid' if x['p']>0.3 else 'low'
             change_24h = x['change_24h'] * 100
             change_7d = x['change_7d'] * 100
-            
+
             delta_24h = f"+{change_24h:.1f}%" if change_24h >= 0 else f"{change_24h:.1f}%"
             delta_7d = f"+{change_7d:.1f}%" if change_7d >= 0 else f"{change_7d:.1f}%"
             cls_24h = 'up' if change_24h >= 0 else 'down'
             cls_7d = 'up' if change_7d >= 0 else 'down'
-            
+
             html += f'''<tr>
 <td class='rank'>{i}</td>
 <td><div class='title'>{x['q']}</div><div class='cat'>{x['c']}</div></td>
@@ -236,13 +258,14 @@ td{{padding:10px 8px;border-bottom:1px solid rgba(255,255,255,0.05);font-size:13
 <td class='vol'>{format_vol(x['vt'])}</td>
 </tr>'''
         html += '</table></div>'
-    
+
+    # 5个分类
     build_table(by_rise, "Top Probability Rise", True)
     build_table(by_fall, "Top Probability Fall", False)
     build_table(by_vt, "Top Total Volume (Historical)", True)
     build_table(by_v24, "Top 24h Volume", True)
     build_table(by_future, "Top Future High Probability (7d-1y)", True)
-    
+
     html += f'''
 <footer style="text-align:center;padding:20px;color:#666;font-size:12px">
 <p>Generated: {rd} 08:00 Beijing</p>
@@ -256,16 +279,41 @@ td{{padding:10px 8px;border-bottom:1px solid rgba(255,255,255,0.05);font-size:13
 
 def main():
     print(f"Running at {datetime.now()}")
-    
+
+    # 打印环境变量用于调试
+    print(f"TELEGRAM_TOKEN set: {bool(TELEGRAM_TOKEN)}")
+    print(f"TELEGRAM_CHAT_ID set: {bool(TELEGRAM_CHAT_ID)}")
+
+    # 打印所有环境变量（调试用）
+    print("All environment variables:")
+    for key, value in os.environ.items():
+        if 'TELEGRAM' in key.upper():
+            print(f"  {key}: {'***' if 'TOKEN' in key.upper() else value}")
+
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        print("ERROR: TELEGRAM_TOKEN or TELEGRAM_CHAT_ID is missing!")
+        return
+
     history = load_history()
     print(f"Loaded history: {len(history)} markets")
-    
+
     markets = get_markets()
     print(f"Got {len(markets)} markets")
-    
-    html = generate_html_report(markets, datetime.now(), history)
-    success = send_document(html, datetime.now().strftime("%Y%m%d"))
-    print(f"Sent: {success}")
+
+    report_date = datetime.now()
+    date_str = report_date.strftime("%Y%m%d")
+
+    # 生成HTML报告
+    html = generate_html_report(markets, report_date, history)
+
+    # 发送HTML文件到Telegram
+    success = send_document(html, date_str)
+    print(f"Document sent: {success}")
+
+    if not success:
+        # 如果文件发送失败，发送文本摘要
+        summary = f"📊 Polymarket Report {date_str}\n\nMarkets: {len(markets)}\nHistory: {len(history)}\n\nReport file sent: {success}"
+        send_telegram(summary)
 
 if __name__ == "__main__":
     main()
