@@ -1,5 +1,5 @@
-# Polymarket 每日报告 - 修复版
-# 放宽过滤条件,获取更多数据
+# Polymarket 每日报告 - 平衡版
+# 减少选举内容的过度集中,增加多样性
 
 import requests
 from datetime import datetime, timedelta
@@ -10,8 +10,8 @@ import json
 HISTORY_FILE = "market_history.json"
 
 # ============= 过滤配置 =============
-# 改为:只排除黑名单,不强制要求白名单
-USE_WHITELIST = False  # 设为False,不强制匹配白名单
+# 设为False,不强制匹配白名单
+USE_WHITELIST = False
 
 # ============= 黑名单关键词 =============
 EXCLUDED = [
@@ -20,6 +20,10 @@ EXCLUDED = [
     'tennis', 'golf', 'boxing', 'mma', 'olympics', 'super bowl', 'nascar',
     'formula 1', 'f1', 'fifa', 'champions league', 'premier league',
     'nba finals', 'world series', 'stanley cup', 'championship', 'tournament',
+    # 体育俱乐部
+    'borussia dortmund', 'napoli', 'manchester', 'chelsea', 'arsenal', 'liverpool',
+    'real madrid', 'barcelona', 'bayern munich', 'psg', 'juventus', 'inter milan',
+    'ac milan', 'bundesliga', 'serie a', 'la liga', 'premier league',
     # 游戏/电竞
     'gaming', 'esports', 'lol', 'dota', 'csgo', 'valorant', 'playstation',
     'xbox', 'nintendo', 'switch', 'video game', 'gamer', 'stream',
@@ -36,8 +40,8 @@ EXCLUDED = [
     'rihanna', 'playboi carti', 'album',
 ]
 
-# ============= 白名单关键词(仅用于标注优先级,不过滤) =============
-ALLOWED_KEYWORDS = [
+# ============= 白名单关键词(优先显示) =============
+PRIORITY_KEYWORDS = [
     'trump', 'biden', 'election', 'president', 'congress', 'senate', 'political', 'politics',
     'government', 'democrat', 'republican', 'vote', 'campaign', 'candidate', 'ballot',
     'kamala', 'harris', 'donald', 'joe',
@@ -55,7 +59,7 @@ ALLOWED_KEYWORDS = [
     'tech', 'technology', 'ai', 'artificial intelligence', 'gpt', 'chatgpt', 'llm',
     'apple', 'google', 'microsoft', 'nvidia', 'tesla', 'spacex', 'elon', 'startup',
     'openai', 'anthropic', 'meta', 'amazon', 'software', 'internet', 'cyber',
-    'machine learning',
+    'machine learning', 'inflation', 'recession', 'gdp', 'economy', 'market',
 ]
 
 # ============= 获取市场数据 =============
@@ -79,10 +83,41 @@ def is_filtered(m):
 
     # 白名单:可选,如果启用则必须包含至少一个允许的关键词
     if USE_WHITELIST:
-        if not any(kw in text for kw in ALLOWED_KEYWORDS):
+        if not any(kw in text for kw in PRIORITY_KEYWORDS):
             return True
 
     return False
+
+def get_priority_score(m):
+    """计算市场优先级分数,用于排序"""
+    question = m.get('question', '').lower()
+    description = m.get('description', '').lower() if m.get('description') else ''
+    text = question + ' ' + description
+    
+    score = 0
+    
+    # 检查是否包含优先关键词
+    for kw in PRIORITY_KEYWORDS:
+        if kw in text:
+            score += 1
+    
+    # 惩罚过度集中的2028选举内容
+    if '2028' in text and ('presidential nomination' in text or 'democratic' in text or 'republican' in text):
+        score -= 2
+    
+    # 优先地缘政治
+    if any(kw in text for kw in ['iran', 'israel', 'ukraine', 'russia', 'china', 'taiwan', 'nuclear', 'invasion', 'war']):
+        score += 3
+    
+    # 优先经济/金融
+    if any(kw in text for kw in ['inflation', 'fed', 'recession', 'economy', 'stock', 'market', 'crypto', 'bitcoin']):
+        score += 2
+    
+    # 优先科技
+    if any(kw in text for kw in ['ai', 'tech', 'gpt', 'nvidia', 'tesla', 'spacex']):
+        score += 2
+    
+    return score
 
 def is_expired(end_date):
     if not end_date: return False
@@ -181,6 +216,7 @@ def generate_html_report(markets, report_date, history):
             market_id = m.get('id', m.get('conditionId', ''))
 
             changes = calculate_changes(price, history.get(market_id, {}))
+            priority = get_priority_score(m)
 
             data.append({
                 'q': m.get('question',''),
@@ -191,7 +227,8 @@ def generate_html_report(markets, report_date, history):
                 'vt': float(m.get('volume') or 0),
                 'change_24h': changes['change_24h_abs'],
                 'change_7d': changes['change_7d_abs'],
-                'comparing_time': changes['comparing_time']
+                'comparing_time': changes['comparing_time'],
+                'priority': priority
             })
         except Exception as e:
             error_count += 1
@@ -237,13 +274,22 @@ def generate_html_report(markets, report_date, history):
     print(f"History updated: {updated_count} existing, {new_markets_count} new markets")
     save_history(new_history)
 
-    # 排序 - Top10
-    by_rise = sorted(data, key=lambda x: x['change_24h'], reverse=True)[:10]
-    by_fall = sorted(data, key=lambda x: x['change_24h'])[:10]
-    by_vt = sorted(data, key=lambda x: x['vt'], reverse=True)[:10]
-    by_v24 = sorted(data, key=lambda x: x['v24'], reverse=True)[:10]
-    by_future = [x for x in data if is_within_range(x['e'])][:10]
-    by_future = sorted(by_future, key=lambda x: x['p'], reverse=True)[:10]
+    # 排序 - 使用复合排序:先按主指标排序,再按优先级排序
+    # 1. Top Probability Rise: 按24h涨幅排序,优先级高的在涨幅相同时排在前面
+    by_rise = sorted(data, key=lambda x: (x['change_24h'], x['priority']), reverse=True)[:10]
+    
+    # 2. Top Probability Fall: 按24h跌幅排序,优先级高的在跌幅相同时排在前面
+    by_fall = sorted(data, key=lambda x: (x['change_24h'], x['priority']))[:10]
+    
+    # 3. Top Total Volume: 按总交易量排序,优先级高的在交易量相同时排在前面
+    by_vt = sorted(data, key=lambda x: (x['vt'], x['priority']), reverse=True)[:10]
+    
+    # 4. Top 24h Volume: 按24小时交易量排序,优先级高的在交易量相同时排在前面
+    by_v24 = sorted(data, key=lambda x: (x['v24'], x['priority']), reverse=True)[:10]
+    
+    # 5. Top Future High Probability: 未来7天-1年内高概率事件
+    by_future = [x for x in data if is_within_range(x['e'])]
+    by_future = sorted(by_future, key=lambda x: (x['p'], x['priority']), reverse=True)[:10]
 
     # 生成HTML
     html = f'''<!DOCTYPE html>
@@ -273,6 +319,7 @@ td{{padding:8px;border-bottom:1px solid #333;vertical-align:top}}
 .down{{color:#ff5252}}
 .vol{{color:#ffc107}}
 .date{{color:#888;font-size:11px}}
+.priority{{color:#888;font-size:9px}}
 </style>
 </head>
 <body>
