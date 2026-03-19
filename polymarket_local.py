@@ -15,7 +15,6 @@ import os
 
 # ── 配置 ──────────────────────────────────────────────────
 GAMMA_API_URL = "https://gamma-api.polymarket.com/markets"
-FETCH_LIMIT   = 500
 
 EXCLUDED = [
     # 体育赛事
@@ -76,33 +75,102 @@ def money(val: float) -> str:
 # ── 数据获取 ──────────────────────────────────────────────
 
 def fetch_markets():
+    """
+    从 Gamma API 获取所有市场数据（使用分页）
+    API 限制每次最多返回 500 条，使用 offset 分页获取全部数据
+    """
     print("正在从 Gamma API 获取市场数据...")
-    r = requests.get(GAMMA_API_URL, params={'closed': 'false', 'limit': FETCH_LIMIT})
-    r.raise_for_status()
-    data = r.json()
-    print(f"  获取到 {len(data)} 个市场")
-    return data
+    
+    all_markets = []
+    offset = 0
+    limit = 500
+    
+    while True:
+        params = {'closed': 'false', 'limit': limit, 'offset': offset}
+        r = requests.get(GAMMA_API_URL, params=params, timeout=60)
+        r.raise_for_status()
+        data = r.json()
+        
+        print(f"  获取 offset={offset}: {len(data)} 个市场")
+        
+        if not data:
+            break
+        
+        all_markets.extend(data)
+        offset += limit
+        
+        # 如果返回数量少于limit，说明是最后一页
+        if len(data) < limit:
+            break
+        
+        # 安全限制，防止无限循环
+        if offset > 20000:
+            print(f"  [警告] offset 超过安全限制，停止获取")
+            break
+    
+    print(f"  总计获取到 {len(all_markets)} 个市场")
+    return all_markets
 
 def filter_markets(markets):
+    """过滤市场：排除关键词、已过期、交易量低于10000的"""
     out = []
+    excluded_count = 0
+    low_volume_count = 0
+    expired_count = 0
+    
     for m in markets:
+        # 过滤排除关键词
         if is_excluded(m.get('question', '')) or is_excluded(m.get('description', '')):
+            excluded_count += 1
             continue
+        
+        # 过滤已过期
         if is_expired(m.get('endDate')):
+            expired_count += 1
             continue
+        
+        # 过滤低交易量（总交易量 < 10,000 USD）
+        volume = f(m.get('volumeNum'))
+        if volume < 10000:
+            low_volume_count += 1
+            continue
+        
         out.append(m)
+    
+    print(f"  过滤详情:")
+    print(f"    - 排除关键词: {excluded_count} 个")
+    print(f"    - 已过期: {expired_count} 个")
+    print(f"    - 低交易量(<10K): {low_volume_count} 个")
     print(f"  过滤后剩余: {len(out)} 个有效市场")
     return out
 
 # ── 排序函数 ──────────────────────────────────────────────
 
 def rank_24h_rise(markets, n=10):
+    """按24h绝对值变化降序排序（概率上涨最快）"""
+    def calc_abs_change(m):
+        ch = m.get('oneDayPriceChange')
+        if ch is None or ch <= -1:
+            return -999  # 无效值排到最后
+        price = f(m.get('lastTradePrice'))
+        historical_price = price / (1 + ch)
+        return price - historical_price  # 返回绝对值变化
+    
     valid = [m for m in markets if m.get('oneDayPriceChange') is not None]
-    return sorted(valid, key=lambda x: x['oneDayPriceChange'], reverse=True)[:n]
+    return sorted(valid, key=calc_abs_change, reverse=True)[:n]
 
 def rank_24h_fall(markets, n=10):
+    """按24h绝对值变化升序排序（概率下降最快）"""
+    def calc_abs_change(m):
+        ch = m.get('oneDayPriceChange')
+        if ch is None or ch <= -1:
+            return 999  # 无效值排到最后
+        price = f(m.get('lastTradePrice'))
+        historical_price = price / (1 + ch)
+        return price - historical_price  # 返回绝对值变化
+    
     valid = [m for m in markets if m.get('oneDayPriceChange') is not None]
-    return sorted(valid, key=lambda x: x['oneDayPriceChange'])[:n]
+    return sorted(valid, key=calc_abs_change)[:n]
 
 def rank_total_volume(markets, n=10):
     return sorted(markets, key=lambda x: f(x.get('volumeNum')), reverse=True)[:n]
@@ -244,13 +312,30 @@ td {
 }
 """
 
-def change_cell(val, css_class):
-    """渲染变化值单元格"""
+def change_cell(val, current_price, css_class):
+    """
+    渲染变化值单元格
+    val 是相对值变化（百分比，如 0.015 表示 +1.5%）
+    需要计算绝对值变化 = 当前价格 - 推算的历史价格
+    """
     if val is None:
         return f'<td class="{css_class}"><span class="flat">—</span></td>'
-    cls = 'up' if val > 0 else ('dn' if val < 0 else 'flat')
-    sign = '+' if val > 0 else ''
-    return f'<td class="{css_class}"><span class="{cls}">{sign}{val*100:.2f}%</span></td>'
+    
+    # 避免除零错误
+    if val <= -1:
+        return f'<td class="{css_class}"><span class="flat">N/A</span></td>'
+    
+    # 计算历史价格（相对值公式）
+    historical_price = current_price / (1 + val)
+    
+    # 计算绝对值变化
+    absolute_change = current_price - historical_price
+    
+    # 判断涨跌
+    cls = 'up' if absolute_change > 0 else ('dn' if absolute_change < 0 else 'flat')
+    sign = '+' if absolute_change > 0 else ''
+    
+    return f'<td class="{css_class}"><span class="{cls}">{sign}{absolute_change*100:.2f}%</span></td>'
 
 def build_table(markets, *, show_end_date=False):
     """生成统一格式的表格（所有榜单都展示：当前概率、较前一天、较7天前、总交易量、24h交易量）"""
@@ -274,9 +359,9 @@ def build_table(markets, *, show_end_date=False):
         # 概率
         prob_html = f'<span class="prob-val">{price*100:.1f}%</span>'
 
-        # 变化列
-        td_1d = change_cell(ch_1d, 'col-d1')
-        td_7d = change_cell(ch_7d, 'col-d7')
+        # 变化列（传入当前价格用于计算绝对值变化）
+        td_1d = change_cell(ch_1d, price, 'col-d1')
+        td_7d = change_cell(ch_7d, price, 'col-d7')
 
         # 交易量
         vol_all_html = f'<span class="vol-val">{money(vol_all)}</span>'
