@@ -1,447 +1,424 @@
-# Polymarket 每日报告 - 最终平衡版 + Telegram 集成
-# 使用 Gamma API + 平衡过滤策略 + Telegram 自动发送
+"""
+Polymarket 每日报告生成器 - V2
+
+5 个维度 TOP10，全部直接使用 Gamma API 内置字段，无需本地历史数据：
+  oneDayPriceChange   — 24h 概率变化
+  oneWeekPriceChange  — 7d  概率变化
+  volumeNum           — 历史总交易量
+  volume24hr          — 24h 交易量
+  lastTradePrice      — 当前概率
+"""
 
 import requests
-from datetime import datetime, timedelta
-import os
-import json
+from datetime import datetime, timezone
 
-# ============= 配置 =============
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+# ── 配置 ──────────────────────────────────────────────────
+GAMMA_API_URL = "https://gamma-api.polymarket.com/markets"
+FETCH_LIMIT   = 500
 
-HISTORY_FILE = "market_history.json"
-
-# ============= 过滤配置 =============
-USE_WHITELIST = False
-
-# ============= 黑名单关键词 =============
 EXCLUDED = [
-    # 体育赛事/比赛
+    # 体育赛事
     'world cup', 'football', 'soccer', 'nba', 'nfl', 'nhl', 'mlb', 'ufc',
     'tennis', 'golf', 'boxing', 'mma', 'olympics', 'super bowl', 'nascar',
-    'formula 1', 'f1', 'fifa', 'champions league', 'premier league',
+    'formula 1', ' f1 ', 'fifa', 'champions league', 'premier league',
     'nba finals', 'world series', 'stanley cup', 'championship', 'tournament',
+    'qualify for the 2026', 'nhl stanley cup', 'fifa world cup',
     # 体育俱乐部
-    'borussia dortmund', 'napoli', 'manchester', 'chelsea', 'arsenal', 'liverpool',
-    'real madrid', 'barcelona', 'bayern munich', 'psg', 'juventus', 'inter milan',
+    'borussia dortmund', 'napoli', 'manchester', 'arsenal', 'liverpool',
+    'real madrid', 'barcelona', 'bayern munich', 'juventus', 'inter milan',
     'ac milan', 'bundesliga', 'serie a', 'la liga',
+    'carolina hurricanes', 'florida panthers', 'edmonton oilers', 'dallas stars',
+    'colorado avalanche', 'vegas golden knights', 'tampa bay lightning',
     # 游戏/电竞
-    'gaming', 'esports', 'lol', 'dota', 'csgo', 'valorant', 'playstation',
-    'xbox', 'nintendo', 'switch', 'video game', 'gamer', 'stream',
-    'e-sports', 'esport', 'pubg', 'overwatch', 'roblox',
-    'gta', 'grand theft auto', 'call of duty', 'fortnite', 'minecraft',
-    'league of legends',
+    'gaming', 'esports', 'league of legends', 'dota', 'csgo', 'valorant',
+    'playstation', 'xbox', 'nintendo', 'video game', 'gamer',
+    'pubg', 'overwatch', 'roblox', 'grand theft auto', 'call of duty',
+    'fortnite', 'minecraft', 'gta vi',
     # 娱乐/电影/音乐
-    'movie', 'film', 'album', 'song', 'concert', 'music', 'entertainment',
-    'actor', 'actress', 'celebrity', 'awards', 'oscar', 'grammy', 'emmy',
-    'festival', 'tour', 'band', 'artist', 'spotify', 'netflix', 'disney',
-    'hulu', 'hbo', 'prime video', 'streaming', 'tv show', 'series',
-    'box office', 'release', 'premiere', 'director', 'producer',
-    'kanye', 'west', 'singles', 'music video',
-    'rihanna', 'playboi carti', 'album',
+    'movie', 'film', 'album', 'song', 'concert', 'music award',
+    'actor', 'actress', 'celebrity', 'oscar', 'grammy', 'emmy',
+    'box office', 'playboi carti', 'rihanna',
 ]
 
-# ============= 白名单关键词(优先显示) =============
-PRIORITY_KEYWORDS = [
-    'trump', 'biden', 'election', 'president', 'congress', 'senate', 'political', 'politics',
-    'government', 'democrat', 'republican', 'vote', 'campaign', 'candidate', 'ballot',
-    'kamala', 'harris', 'donald', 'joe',
-    'iran', 'israel', 'palestine', 'hamas', 'middle east',
-    'geopolitics', 'policy', 'sanction', 'conflict', 'military',
-    'nuclear', 'missile', 'attack', 'invasion', 'war', 'ukraine', 'russia', 'china', 'taiwan',
-    'tension', 'diplomatic', 'border', 'trade war',
-    'crypto', 'bitcoin', 'btc', 'eth', 'ethereum', 'solana', 'doge', 'altcoin', 'defi',
-    'blockchain', 'nft', 'web3', 'token', 'coin', 'cryptocurrency', 'exchange',
-    'inflation', 'fed', 'interest rate', 'federal reserve', 'recession', 'economy',
-    'stock', 'market', 's&p 500', 'nasdaq', 'dow', 'wall street', 'financial', 'finance',
-    'trading', 'invest', 'investment', 'fund', 'etf', 'dividend', 'bond', 'treasury',
-    'gdp', 'economic', 'bank', 'credit', 'debt', 'loan', 'banking', 'crash', 'bull', 'bear',
-    'forex', 'currency', 'dollar', 'euro', 'yen', 'yuan', 'commodity', 'gold', 'silver', 'oil',
-    'tech', 'technology', 'ai', 'artificial intelligence', 'gpt', 'chatgpt', 'llm',
-    'apple', 'google', 'microsoft', 'nvidia', 'tesla', 'spacex', 'elon', 'startup',
-    'openai', 'anthropic', 'meta', 'amazon', 'software', 'internet', 'cyber',
-    'machine learning', 'inflation', 'recession', 'gdp', 'economy', 'market',
-]
+# ── 工具函数 ──────────────────────────────────────────────
 
-# ============= 获取市场数据 =============
-def get_markets():
-    url = "https://gamma-api.polymarket.com/markets?closed=false&limit=500"
+def is_excluded(text: str) -> bool:
+    t = (text or '').lower()
+    return any(kw in t for kw in EXCLUDED)
+
+def is_expired(end_date: str) -> bool:
+    if not end_date:
+        return False
     try:
-        r = requests.get(url, timeout=30)
-        return r.json() if r.status_code == 200 else []
-    except:
-        return []
+        end = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+        return end < datetime.now(timezone.utc)
+    except Exception:
+        return False
 
-# ============= 过滤函数 =============
-def is_filtered(m):
-    question = m.get('question', '').lower()
-    description = m.get('description', '').lower() if m.get('description') else ''
-    text = question + ' ' + description
-
-    # 黑名单:如果包含排除的关键词,直接过滤
-    if any(kw in text for kw in EXCLUDED):
-        return True
-
-    # 白名单:可选,如果启用则必须包含至少一个允许的关键词
-    if USE_WHITELIST:
-        if not any(kw in text for kw in PRIORITY_KEYWORDS):
-            return True
-
-    return False
-
-def get_priority_score(m):
-    """计算市场优先级分数,用于排序"""
-    question = m.get('question', '').lower()
-    description = m.get('description', '').lower() if m.get('description') else ''
-    text = question + ' ' + description
-    
-    score = 0
-    
-    # 检查是否包含优先关键词
-    for kw in PRIORITY_KEYWORDS:
-        if kw in text:
-            score += 1
-    
-    # 惩罚过度集中的2028选举内容
-    if '2028' in text and ('presidential nomination' in text or 'democratic' in text or 'republican' in text):
-        score -= 2
-    
-    # 优先地缘政治
-    if any(kw in text for kw in ['iran', 'israel', 'ukraine', 'russia', 'china', 'taiwan', 'nuclear', 'invasion', 'war']):
-        score += 3
-    
-    # 优先经济/金融
-    if any(kw in text for kw in ['inflation', 'fed', 'recession', 'economy', 'stock', 'market', 'crypto', 'bitcoin']):
-        score += 2
-    
-    # 优先科技
-    if any(kw in text for kw in ['ai', 'tech', 'gpt', 'nvidia', 'tesla', 'spacex']):
-        score += 2
-    
-    return score
-
-def is_expired(end_date):
-    if not end_date: return False
+def f(val) -> float:
     try:
-        d = end_date.replace('Z','').split('+')[0]
-        return (datetime.fromisoformat(d) + timedelta(hours=8)).date() < datetime.now().date()
-    except: return False
+        return float(val) if val is not None else 0.0
+    except Exception:
+        return 0.0
 
-def is_within_range(end_date, days_min=7, days_max=365):
-    if not end_date: return False
-    try:
-        d = end_date.replace('Z','').split('+')[0]
-        end_dt = datetime.fromisoformat(d) + timedelta(hours=8)
-        now = datetime.now()
-        days_until = (end_dt - now).days
-        return days_min <= days_until <= days_max
-    except: return False
+def pct(val: float, sign=True) -> str:
+    s = '+' if (sign and val >= 0) else ''
+    return f"{s}{val*100:.2f}%"
 
-def format_vol(v):
-    v = float(v or 0)
-    return f"${v/1e6:.2f}M" if v>=1e6 else f"${v/1e3:.1f}K" if v>=1e3 else f"${v:.0f}"
+def money(val: float) -> str:
+    if val >= 1_000_000:
+        return f"${val/1_000_000:.2f}M"
+    if val >= 1_000:
+        return f"${val/1_000:.1f}K"
+    return f"${val:.0f}"
 
-def format_pct(p):
-    return f"{float(p or 0)*100:.1f}%" if p else "N/A"
+# ── 数据获取 ──────────────────────────────────────────────
 
-def format_end(d):
-    return d[:10] if d else "N/A"
+def fetch_markets():
+    print("正在从 Gamma API 获取市场数据...")
+    r = requests.get(GAMMA_API_URL, params={'closed': 'false', 'limit': FETCH_LIMIT})
+    r.raise_for_status()
+    data = r.json()
+    print(f"  获取到 {len(data)} 个市场")
+    return data
 
-# ============= 历史数据管理 =============
-def load_history():
-    try:
-        if os.path.exists(HISTORY_FILE):
-            with open(HISTORY_FILE, 'r') as f:
-                return json.load(f)
-    except: pass
-    return {}
-
-def save_history(data):
-    try:
-        with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f"Error saving history: {e}")
-
-def calculate_changes(current_price, history):
-    changes = {
-        "change_24h_abs": 0,
-        "change_7d_abs": 0,
-        "change_24h_pct": 0,
-        "change_7d_pct": 0,
-        "comparing_time": "No historical data"
-    }
-
-    if history:
-        h = history
-        if 'price_24h' in h and h['price_24h']:
-            changes["change_24h_abs"] = current_price - h['price_24h']
-            changes["comparing_time"] = "vs 24h ago"
-        if 'price_7d' in h and h['price_7d']:
-            changes["change_7d_abs"] = current_price - h['price_7d']
-            if "24h" in changes["comparing_time"]:
-                changes["comparing_time"] = "vs 24h & 7d ago"
-            else:
-                changes["comparing_time"] = "vs 7d ago"
-
-    return changes
-
-# ============= Telegram 发送 =============
-def send_telegram(text):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    data = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}
-    r = requests.post(url, json=data, timeout=30)
-    return r.json().get('ok', False)
-
-def send_document(html_content, date_str, max_retries=3):
-    filename = f"polymarket_report_{date_str}.html"
-
-    with open(filename, 'w', encoding='utf-8') as f:
-        f.write(html_content)
-
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
-
-    for attempt in range(max_retries):
-        try:
-            with open(filename, 'rb') as f:
-                files = {'document': (filename, f, 'text/html')}
-                data = {'chat_id': TELEGRAM_CHAT_ID, 'caption': f"Polymarket Daily Report - {date_str}"}
-                r = requests.post(url, data=data, files=files, timeout=(30, 120))
-
-            print(f"Telegram API Response: {r.status_code}")
-            return r.json().get('ok', False)
-
-        except requests.exceptions.Timeout as e:
-            print(f"Timeout on attempt {attempt + 1}/{max_retries}: {e}")
-            if attempt < max_retries - 1:
-                import time
-                time.sleep(5)
-            else:
-                return False
-        except Exception as e:
-            print(f"Error sending document: {e}")
-            return False
-
-    return False
-
-# ============= 报告生成 =============
-def generate_html_report(markets, report_date, history):
-    rd = report_date.strftime("%Y-%m-%d")
-    now = datetime.now()
-
-    print(f"Total markets from API: {len(markets)}")
-    filtered_count = 0
-    expired_count = 0
-
-    data = []
-    error_count = 0
-
+def filter_markets(markets):
+    out = []
     for m in markets:
-        if is_filtered(m):
-            filtered_count += 1
+        if is_excluded(m.get('question', '')) or is_excluded(m.get('description', '')):
             continue
         if is_expired(m.get('endDate')):
-            expired_count += 1
             continue
-        try:
-            prices = m.get('outcomePrices', [])
-            if isinstance(prices, str):
-                try:
-                    prices = json.loads(prices)
-                except Exception as parse_error:
-                    print(f"Failed to parse prices: {parse_error}")
-                    prices = []
-            price = float(prices[0]) if prices and len(prices) > 0 else 0
-            market_id = m.get('id', m.get('conditionId', ''))
+        out.append(m)
+    print(f"  过滤后剩余: {len(out)} 个有效市场")
+    return out
 
-            changes = calculate_changes(price, history.get(market_id, {}))
-            priority = get_priority_score(m)
+# ── 排序函数 ──────────────────────────────────────────────
 
-            data.append({
-                'q': m.get('question',''),
-                'c': m.get('category',''),
-                'e': m.get('endDate',''),
-                'p': price,
-                'v24': float(m.get('volume24hr') or 0),
-                'vt': float(m.get('volume') or 0),
-                'change_24h': changes['change_24h_abs'],
-                'change_7d': changes['change_7d_abs'],
-                'comparing_time': changes['comparing_time'],
-                'priority': priority
-            })
-        except Exception as e:
-            error_count += 1
-            print(f"Error processing market: {e}")
-            continue
+def rank_24h_rise(markets, n=10):
+    valid = [m for m in markets if m.get('oneDayPriceChange') is not None]
+    return sorted(valid, key=lambda x: x['oneDayPriceChange'], reverse=True)[:n]
 
-    print(f"Filtered: {filtered_count}, Expired: {expired_count}, Errors: {error_count}, Valid: {len(data)}")
+def rank_24h_fall(markets, n=10):
+    valid = [m for m in markets if m.get('oneDayPriceChange') is not None]
+    return sorted(valid, key=lambda x: x['oneDayPriceChange'])[:n]
 
-    # 更新历史数据
-    new_history = history.copy()
-    updated_count = 0
-    new_markets_count = 0
+def rank_total_volume(markets, n=10):
+    return sorted(markets, key=lambda x: f(x.get('volumeNum')), reverse=True)[:n]
 
+def rank_24h_volume(markets, n=10):
+    return sorted(markets, key=lambda x: f(x.get('volume24hr')), reverse=True)[:n]
+
+def rank_future_prob(markets, n=10):
+    now = datetime.now(timezone.utc)
+    future = []
     for m in markets:
-        if is_filtered(m) or is_expired(m.get('endDate')): continue
-        try:
-            market_id = m.get('id', m.get('conditionId', ''))
-            prices = m.get('outcomePrices', [])
-            if isinstance(prices, str):
-                try:
-                    prices = json.loads(prices)
-                except:
-                    prices = []
-            price = float(prices[0]) if prices and len(prices) > 0 else 0
-
-            if market_id in new_history:
-                old_24h = new_history[market_id].get('price_24h', price)
-                new_history[market_id]['price_7d'] = old_24h
-                new_history[market_id]['price_24h'] = price
-                new_history[market_id]['timestamp'] = now.isoformat()
-                updated_count += 1
-            else:
-                new_history[market_id] = {
-                    'price_24h': price,
-                    'price_7d': price,
-                    'timestamp': now.isoformat()
-                }
-                new_markets_count += 1
-        except Exception as e:
-            print(f"Error updating history: {e}")
+        ed = m.get('endDate')
+        if not ed:
             continue
+        try:
+            end = datetime.fromisoformat(ed.replace('Z', '+00:00'))
+            days = (end - now).days
+            if 7 <= days <= 365:
+                future.append(m)
+        except Exception:
+            continue
+    return sorted(future, key=lambda x: f(x.get('lastTradePrice')), reverse=True)[:n]
 
-    print(f"History updated: {updated_count} existing, {new_markets_count} new markets")
-    save_history(new_history)
+# ── HTML 生成 ─────────────────────────────────────────────
 
-    # 排序 - 使用复合排序:先按主指标排序,再按优先级排序
-    # 1. Top Probability Rise: 按24h涨幅排序,优先级高的在涨幅相同时排在前面
-    by_rise = sorted(data, key=lambda x: (x['change_24h'], x['priority']), reverse=True)[:10]
-    
-    # 2. Top Probability Fall: 按24h跌幅排序,优先级高的在跌幅相同时排在前面
-    by_fall = sorted(data, key=lambda x: (x['change_24h'], x['priority']))[:10]
-    
-    # 3. Top Total Volume: 按总交易量排序,优先级高的在交易量相同时排在前面
-    by_vt = sorted(data, key=lambda x: (x['vt'], x['priority']), reverse=True)[:10]
-    
-    # 4. Top 24h Volume: 按24小时交易量排序,优先级高的在交易量相同时排在前面
-    by_v24 = sorted(data, key=lambda x: (x['v24'], x['priority']), reverse=True)[:10]
-    
-    # 5. Top Future High Probability: 未来7天-1年内高概率事件
-    by_future = [x for x in data if is_within_range(x['e'])]
-    by_future = sorted(by_future, key=lambda x: (x['p'], x['priority']), reverse=True)[:10]
+CSS = """
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-    # 生成HTML
-    html = f'''<!DOCTYPE html>
-<html>
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    background: #0d1117;
+    color: #c9d1d9;
+    padding: 28px 16px;
+    line-height: 1.5;
+}
+
+.page-header {
+    text-align: center;
+    margin-bottom: 32px;
+}
+.page-header h1 {
+    font-size: 2rem;
+    color: #e6edf3;
+    letter-spacing: 1px;
+}
+.page-header .sub {
+    margin-top: 6px;
+    color: #8b949e;
+    font-size: .9rem;
+}
+
+.meta-bar {
+    display: flex; flex-wrap: wrap; gap: 10px; justify-content: center;
+    margin-bottom: 32px;
+}
+.chip {
+    background: #21262d; border: 1px solid #30363d;
+    border-radius: 20px; padding: 4px 14px;
+    font-size: .82rem; color: #8b949e;
+}
+
+/* ── 单个 section ── */
+.section {
+    margin-bottom: 36px;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.section-header {
+    padding: 14px 20px;
+    background: #1c2128;
+    border-bottom: 1px solid #30363d;
+    display: flex; align-items: center; gap: 10px;
+}
+.section-header .icon { font-size: 1.3rem; }
+.section-header .title { font-size: 1.05rem; font-weight: 700; color: #e6edf3; }
+.section-header .sort-key {
+    margin-left: auto;
+    font-size: .78rem; color: #8b949e;
+    background: #21262d; border: 1px solid #30363d;
+    border-radius: 12px; padding: 2px 10px;
+}
+
+/* ── 表格 ── */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: .88rem;
+}
+thead th {
+    background: #1c2128;
+    color: #8b949e;
+    font-weight: 600;
+    padding: 10px 14px;
+    text-align: left;
+    border-bottom: 1px solid #30363d;
+    white-space: nowrap;
+}
+tbody tr {
+    border-bottom: 1px solid #21262d;
+    transition: background .15s;
+}
+tbody tr:last-child { border-bottom: none; }
+tbody tr:hover { background: #1c2128; }
+td {
+    padding: 10px 14px;
+    vertical-align: middle;
+}
+
+/* 列宽 */
+.col-rank  { width: 36px; text-align: center; color: #8b949e; font-weight: 600; }
+.col-q     { min-width: 220px; color: #c9d1d9; line-height: 1.4; }
+.col-prob  { width: 90px;  text-align: right; white-space: nowrap; }
+.col-d1    { width: 110px; text-align: right; white-space: nowrap; }
+.col-d7    { width: 110px; text-align: right; white-space: nowrap; }
+.col-vol   { width: 120px; text-align: right; white-space: nowrap; }
+.col-vol24 { width: 120px; text-align: right; white-space: nowrap; }
+.col-date  { width: 100px; text-align: right; white-space: nowrap; color: #8b949e; }
+
+/* 数值样式 */
+.prob-val  { color: #58a6ff; font-weight: 700; }
+.up        { color: #f85149; font-weight: 700; }   /* 上升 = 红色 */
+.dn        { color: #3fb950; font-weight: 700; }   /* 下降 = 绿色 */
+.flat      { color: #8b949e; }
+.vol-val   { color: #bc8cff; }
+.rank-num  { font-size: .8rem; color: #6e7681; }
+
+/* 响应式 */
+@media (max-width: 700px) {
+    .col-d7, .col-vol, .col-date { display: none; }
+    table { font-size: .8rem; }
+}
+
+.footer {
+    text-align: center; color: #484f58;
+    margin-top: 40px; font-size: .8rem;
+}
+"""
+
+def change_cell(val, css_class):
+    """渲染变化值单元格"""
+    if val is None:
+        return f'<td class="{css_class}"><span class="flat">—</span></td>'
+    cls = 'up' if val > 0 else ('dn' if val < 0 else 'flat')
+    sign = '+' if val > 0 else ''
+    return f'<td class="{css_class}"><span class="{cls}">{sign}{val*100:.2f}%</span></td>'
+
+def build_table(markets, *, show_end_date=False):
+    """生成统一格式的表格（所有榜单都展示：当前概率、较前一天、较7天前、总交易量、24h交易量）"""
+    extra_th = '<th class="col-date">截止日期</th>' if show_end_date else ''
+
+    rows = []
+    for i, m in enumerate(markets, 1):
+        q       = m.get('question', 'N/A')
+        price   = f(m.get('lastTradePrice'))
+        ch_1d   = m.get('oneDayPriceChange')
+        ch_7d   = m.get('oneWeekPriceChange')
+        vol_all = f(m.get('volumeNum'))
+        vol_24h = f(m.get('volume24hr'))
+
+        # 排名高亮
+        rank_style = ''
+        if i == 1:   rank_style = 'style="color:#ffd700"'
+        elif i == 2: rank_style = 'style="color:#c0c0c0"'
+        elif i == 3: rank_style = 'style="color:#cd7f32"'
+
+        # 概率
+        prob_html = f'<span class="prob-val">{price*100:.1f}%</span>'
+
+        # 变化列
+        td_1d = change_cell(ch_1d, 'col-d1')
+        td_7d = change_cell(ch_7d, 'col-d7')
+
+        # 交易量
+        vol_all_html = f'<span class="vol-val">{money(vol_all)}</span>'
+        vol_24h_html = f'<span class="vol-val">{money(vol_24h)}</span>'
+
+        # 截止日期
+        extra_td = ''
+        if show_end_date:
+            ed = m.get('endDate', '')
+            date_str = '—'
+            if ed:
+                try:
+                    dt = datetime.fromisoformat(ed.replace('Z', '+00:00'))
+                    date_str = dt.strftime('%Y-%m-%d')
+                except Exception:
+                    pass
+            extra_td = f'<td class="col-date">{date_str}</td>'
+
+        rows.append(f"""
+        <tr>
+          <td class="col-rank"><span {rank_style}>{i}</span></td>
+          <td class="col-q">{q}</td>
+          <td class="col-prob">{prob_html}</td>
+          {td_1d}
+          {td_7d}
+          <td class="col-vol">{vol_all_html}</td>
+          <td class="col-vol24">{vol_24h_html}</td>
+          {extra_td}
+        </tr>""")
+
+    rows_html = '\n'.join(rows)
+    return f"""
+    <table>
+      <thead>
+        <tr>
+          <th class="col-rank">#</th>
+          <th class="col-q">事件</th>
+          <th class="col-prob">当前概率</th>
+          <th class="col-d1">较前一天</th>
+          <th class="col-d7">较7天前</th>
+          <th class="col-vol">总交易量</th>
+          <th class="col-vol24">24h交易量</th>
+          {extra_th}
+        </tr>
+      </thead>
+      <tbody>
+        {rows_html}
+      </tbody>
+    </table>"""
+
+def section(icon, title, sort_key_label, table_html):
+    return f"""
+  <div class="section">
+    <div class="section-header">
+      <span class="icon">{icon}</span>
+      <span class="title">{title}</span>
+      <span class="sort-key">排序依据: {sort_key_label}</span>
+    </div>
+    {table_html}
+  </div>"""
+
+def generate_html(markets):
+    now     = datetime.now()
+    now_str = now.strftime('%Y-%m-%d %H:%M:%S')
+    date_str= now.strftime('%Y-%m-%d')
+
+    r1 = rank_24h_rise(markets)
+    r2 = rank_24h_fall(markets)
+    r3 = rank_total_volume(markets)
+    r4 = rank_24h_volume(markets)
+    r5 = rank_future_prob(markets)
+
+    sections_html = ''.join([
+        section('📈', '概率上涨最快 TOP10',
+                '24h 概率变化（降序）',
+                build_table(r1, show_end_date=True)),
+        section('📉', '概率下降最快 TOP10',
+                '24h 概率变化（升序）',
+                build_table(r2, show_end_date=True)),
+        section('💰', '历史交易量最大 TOP10',
+                '历史总交易量',
+                build_table(r3, show_end_date=True)),
+        section('🔥', '24h 交易量最大 TOP10',
+                '24h 新增交易量',
+                build_table(r4, show_end_date=True)),
+        section('🎯', '未来高概率事件 TOP10',
+                '当前概率（截止日期: 未来 7 天 ~ 1 年）',
+                build_table(r5, show_end_date=True)),
+    ])
+
+    return f"""<!DOCTYPE html>
+<html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
-<style>
-body{{font-family:sans-serif;background:#1a1a2e;color:#e4e4e4;padding:10px}}
-.container{{max-width:900px;margin:0 auto}}
-h1{{color:#00d4ff;text-align:center;padding:10px 0}}
-.info{{text-align:center;gap:10px;display:flex;justify-content:center;margin:10px 0}}
-.info span{{background:#1e3a5a;padding:5px 10px;border-radius:5px}}
-.note{{background:#2d2d44;padding:10px;border-radius:5px;margin:10px 0;font-size:12px}}
-.section{{background:#252538;padding:15px;margin:10px 0;border-radius:5px}}
-.section h2{{color:#fff;margin:0 0 10px 0}}
-table{{width:100%;border-collapse:collapse;font-size:12px}}
-th{{background:#1e3a5a;color:#00d4ff;padding:5px;text-align:left}}
-td{{padding:8px;border-bottom:1px solid #333;vertical-align:top}}
-.rank{{color:#00d4ff;font-weight:bold;text-align:center;width:30px}}
-.title{{color:#fff;font-size:13px;line-height:1.4;max-width:350px;word-wrap:break-word;word-break:break-word}}
-.cat{{color:#888;font-size:10px;margin-top:3px}}
-.prob{{padding:2px 6px;border-radius:3px;font-weight:bold}}
-.high{{background:#004d26;color:#00ff88}}
-.mid{{background:#4d3d00;color:#ffc107}}
-.low{{background:#4d1a1a;color:#ff5252}}
-.up{{color:#00ff88}}
-.down{{color:#ff5252}}
-.vol{{color:#ffc107}}
-.date{{color:#888;font-size:11px}}
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>Polymarket 每日报告 {date_str}</title>
+  <style>{CSS}</style>
 </head>
 <body>
-<div class="container">
-<h1>Polymarket Daily Report - {rd}</h1>
-<div class="info">
-<span>Date: {rd}</span>
-<span>Beijing Time: 08:00</span>
-</div>
-<div class="note">
-Filtered: Sports/Gaming/Entertainment | Valid Markets: {len(data)} | Comparing: {by_rise[0]['comparing_time'] if by_rise else 'No historical data'}
-</div>
-'''
+  <div class="page-header">
+    <h1>Polymarket 每日报告</h1>
+    <p class="sub">生成时间: {now_str} &nbsp;|&nbsp; 数据来源: gamma-api.polymarket.com</p>
+  </div>
 
-    def build_table(rows, title, rise=True, show_change=True):
-        nonlocal html
-        html += f'''<div class="section">
-<h2>{'📈' if rise else '📉'} {title}</h2>
-<table><tr><th>#</th><th>Event</th><th>Current</th><th>24h Change</th><th>7d Change</th><th>End Date</th><th>24h Vol</th><th>Total Vol</th></tr>'''
-        for i, x in enumerate(rows[:10], 1):
-            pc = 'high' if x['p']>0.6 else 'mid' if x['p']>0.3 else 'low'
-            change_24h = x['change_24h'] * 100
-            change_7d = x['change_7d'] * 100
+  <div class="meta-bar">
+    <span class="chip">有效市场: {len(markets)} 个</span>
+    <span class="chip">「较前一天」= oneDayPriceChange</span>
+    <span class="chip">「较前一周」= oneWeekPriceChange</span>
+    <span class="chip">「历史总交易量」= volumeNum</span>
+    <span class="chip">「24h交易量」= volume24hr</span>
+  </div>
 
-            delta_24h = f"+{change_24h:.1f}%" if change_24h >= 0 else f"{change_24h:.1f}%"
-            delta_7d = f"+{change_7d:.1f}%" if change_7d >= 0 else f"{change_7d:.1f}%"
-            cls_24h = 'up' if change_24h >= 0 else 'down'
-            cls_7d = 'up' if change_7d >= 0 else 'down'
+  {sections_html}
 
-            html += f'''<tr>
-<td class='rank'>{i}</td>
-<td><div class='title' title="{x['q']}">{x['q']}</div><div class='cat'>{x['c']}</div></td>
-<td><span class='prob {pc}'>{format_pct(x['p'])}</span></td>
-<td class='{cls_24h}'>{delta_24h}</td>
-<td class='{cls_7d}'>{delta_7d}</td>
-<td class='date'>{format_end(x['e'])}</td>
-<td class='vol'>{format_vol(x['v24'])}</td>
-<td class='vol'>{format_vol(x['vt'])}</td>
-</tr>'''
-        html += '</table></div>'
-
-    # 5个分类
-    build_table(by_rise, "Top Probability Rise", True)
-    build_table(by_fall, "Top Probability Fall", False)
-    build_table(by_vt, "Top Total Volume", True)
-    build_table(by_v24, "Top 24h Volume", True)
-    build_table(by_future, "Top Future High Probability", True)
-
-    html += f'''
-<footer style="text-align:center;padding:10px;color:#666;font-size:10px">
-<p>Generated: {rd} | API: Gamma API | {by_rise[0]['comparing_time'] if by_rise else 'N/A'}</p>
-</footer>
-</div>
+  <div class="footer">
+    数据来源: polymarket.com &nbsp;|&nbsp; 生成时间: {now_str}
+  </div>
 </body>
-</html>'''
+</html>"""
 
-    return html
+# ── 主程序 ────────────────────────────────────────────────
 
-# ============= 主函数 =============
 def main():
-    print(f"Running at {datetime.now()}")
+    print("=" * 56)
+    print("Polymarket 每日报告生成器 V2  (无历史数据)")
+    print("=" * 56)
 
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("ERROR: TELEGRAM_TOKEN or TELEGRAM_CHAT_ID is missing!")
-        print("Please set environment variables:")
-        print("  export TELEGRAM_TOKEN='your_bot_token'")
-        print("  export TELEGRAM_CHAT_ID='your_chat_id'")
+    markets_raw = fetch_markets()
+    markets     = filter_markets(markets_raw)
+
+    if not markets:
+        print("没有找到有效市场数据，退出。")
         return
 
-    history = load_history()
-    print(f"Loaded history: {len(history)} markets")
+    html     = generate_html(markets)
+    filename = f"polymarket_report_{datetime.now().strftime('%Y%m%d')}.html"
 
-    markets = get_markets()
-    print(f"Got {len(markets)} markets from Gamma API")
+    with open(filename, 'w', encoding='utf-8') as fh:
+        fh.write(html)
 
-    report_date = datetime.now()
-    date_str = report_date.strftime("%Y%m%d")
+    print(f"\n报告已生成: {filename}")
+    print("5 个维度 TOP10 全部使用 Gamma API 内置字段，无需本地历史数据。")
 
-    html = generate_html_report(markets, report_date, history)
-
-    success = send_document(html, date_str)
-    print(f"Document sent: {success}")
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
 
