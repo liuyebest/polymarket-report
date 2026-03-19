@@ -154,8 +154,11 @@ def rank_24h_rise(markets, n=10):
             return -999  # 无效值排到最后
         price = f(m.get('lastTradePrice'))
         historical_price = price / (1 + ch)
+        # 检查历史价格是否合理（应该在 0 到 1 之间）
+        if historical_price < 0 or historical_price > 1:
+            return -999  # 无效值排到最后
         return price - historical_price  # 返回绝对值变化
-    
+
     valid = [m for m in markets if m.get('oneDayPriceChange') is not None]
     return sorted(valid, key=calc_abs_change, reverse=True)[:n]
 
@@ -167,8 +170,11 @@ def rank_24h_fall(markets, n=10):
             return 999  # 无效值排到最后
         price = f(m.get('lastTradePrice'))
         historical_price = price / (1 + ch)
+        # 检查历史价格是否合理（应该在 0 到 1 之间）
+        if historical_price < 0 or historical_price > 1:
+            return 999  # 无效值排到最后
         return price - historical_price  # 返回绝对值变化
-    
+
     valid = [m for m in markets if m.get('oneDayPriceChange') is not None]
     return sorted(valid, key=calc_abs_change)[:n]
 
@@ -320,21 +326,25 @@ def change_cell(val, current_price, css_class):
     """
     if val is None:
         return f'<td class="{css_class}"><span class="flat">—</span></td>'
-    
-    # 避免除零错误
+
+    # 避免除零错误和异常值
     if val <= -1:
         return f'<td class="{css_class}"><span class="flat">N/A</span></td>'
-    
+
     # 计算历史价格（相对值公式）
     historical_price = current_price / (1 + val)
-    
+
+    # 检查历史价格是否合理（应该在 0 到 1 之间）
+    if historical_price < 0 or historical_price > 1:
+        return f'<td class="{css_class}"><span class="flat">N/A</span></td>'
+
     # 计算绝对值变化
     absolute_change = current_price - historical_price
-    
+
     # 判断涨跌
     cls = 'up' if absolute_change > 0 else ('dn' if absolute_change < 0 else 'flat')
     sign = '+' if absolute_change > 0 else ''
-    
+
     return f'<td class="{css_class}"><span class="{cls}">{sign}{absolute_change*100:.2f}%</span></td>'
 
 def build_table(markets, *, show_end_date=False):
