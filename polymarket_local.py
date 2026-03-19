@@ -233,7 +233,7 @@ td {
 
 /* 响应式 */
 @media (max-width: 700px) {
-    .col-d7, .col-vol, .col-date { display: none; }
+    .col-d7, .col-vol { display: none; }
     table { font-size: .8rem; }
 }
 
@@ -281,7 +281,7 @@ def build_table(markets, *, show_end_date=False):
         vol_all_html = f'<span class="vol-val">{money(vol_all)}</span>'
         vol_24h_html = f'<span class="vol-val">{money(vol_24h)}</span>'
 
-        # 截止日期
+        # 截止日期（仅未来高概率榜）
         extra_td = ''
         if show_end_date:
             ed = m.get('endDate', '')
@@ -421,5 +421,4 @@ def main():
 
 if __name__ == '__main__':
     main()
-
 
