@@ -11,6 +11,7 @@ Polymarket 每日报告生成器 - V2
 
 import requests
 from datetime import datetime, timezone
+import os
 
 # ── 配置 ──────────────────────────────────────────────────
 GAMMA_API_URL = "https://gamma-api.polymarket.com/markets"
@@ -233,7 +234,7 @@ td {
 
 /* 响应式 */
 @media (max-width: 700px) {
-    .col-d7, .col-vol { display: none; }
+    .col-d7, .col-vol, .col-date { display: none; }
     table { font-size: .8rem; }
 }
 
@@ -281,7 +282,7 @@ def build_table(markets, *, show_end_date=False):
         vol_all_html = f'<span class="vol-val">{money(vol_all)}</span>'
         vol_24h_html = f'<span class="vol-val">{money(vol_24h)}</span>'
 
-        # 截止日期（仅未来高概率榜）
+        # 截止日期
         extra_td = ''
         if show_end_date:
             ed = m.get('endDate', '')
@@ -396,6 +397,42 @@ def generate_html(markets):
 </body>
 </html>"""
 
+# ── Telegram 发送 ───────────────────────────────────────────
+
+def send_telegram_document(html_content, date_str):
+    """发送HTML文件到Telegram"""
+    telegram_token = os.environ.get('TELEGRAM_TOKEN')
+    telegram_chat_id = os.environ.get('TELEGRAM_CHAT_ID')
+    
+    if not telegram_token or not telegram_chat_id:
+        print("[ERROR] TELEGRAM_TOKEN or TELEGRAM_CHAT_ID not set, skipping Telegram send")
+        return False
+    
+    filename = f"polymarket_report_{date_str}.html"
+    
+    # 保存HTML文件
+    with open(filename, 'w', encoding='utf-8') as f:
+        f.write(html_content)
+    
+    print(f"[SENDING] Sending to Telegram: {filename}")
+    
+    # 发送到Telegram
+    url = f"https://api.telegram.org/bot{telegram_token}/sendDocument"
+    
+    try:
+        with open(filename, 'rb') as f:
+            files = {'document': (filename, f, 'text/html')}
+            data = {'chat_id': telegram_chat_id, 'caption': f"Polymarket Daily Report - {date_str}"}
+            r = requests.post(url, data=data, files=files, timeout=(30, 120))
+        
+        print(f"[RESPONSE] Telegram API Status: {r.status_code}")
+        print(f"[RESPONSE] Response body: {r.text[:200]}...")
+        
+        return r.json().get('ok', False)
+    except Exception as e:
+        print(f"[ERROR] Telegram send error: {e}")
+        return False
+
 # ── 主程序 ────────────────────────────────────────────────
 
 def main():
@@ -418,6 +455,10 @@ def main():
 
     print(f"\n报告已生成: {filename}")
     print("5 个维度 TOP10 全部使用 Gamma API 内置字段，无需本地历史数据。")
+    
+    # 发送到 Telegram
+    success = send_telegram_document(html, datetime.now().strftime('%Y%m%d'))
+    print(f"[RESULT] Telegram send: {'SUCCESS' if success else 'FAILED'}")
 
 if __name__ == '__main__':
     main()
