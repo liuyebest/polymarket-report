@@ -12,39 +12,28 @@ Polymarket 每日报告生成器 - V2
 import requests
 from datetime import datetime, timezone
 import os
+import json
 
 # ── 配置 ──────────────────────────────────────────────────
 GAMMA_API_URL = "https://gamma-api.polymarket.com/markets"
+TAG_CLASSIFICATION_FILE = "tag_classification.json"
 
-EXCLUDED = [
-    # 体育赛事
-    'world cup', 'football', 'soccer', 'nba', 'nfl', 'nhl', 'mlb', 'ufc',
-    'tennis', 'golf', 'boxing', 'mma', 'olympics', 'super bowl', 'nascar',
-    'formula 1', ' f1 ', 'fifa', 'champions league', 'premier league',
-    'nba finals', 'world series', 'stanley cup', 'championship', 'tournament',
-    'qualify for the 2026', 'nhl stanley cup', 'fifa world cup',
-    # 体育俱乐部
-    'borussia dortmund', 'napoli', 'manchester', 'arsenal', 'liverpool',
-    'real madrid', 'barcelona', 'bayern munich', 'juventus', 'inter milan',
-    'ac milan', 'bundesliga', 'serie a', 'la liga',
-    'carolina hurricanes', 'florida panthers', 'edmonton oilers', 'dallas stars',
-    'colorado avalanche', 'vegas golden knights', 'tampa bay lightning',
-    # 游戏/电竞
-    'gaming', 'esports', 'league of legends', 'dota', 'csgo', 'valorant',
-    'playstation', 'xbox', 'nintendo', 'video game', 'gamer',
-    'pubg', 'overwatch', 'roblox', 'grand theft auto', 'call of duty',
-    'fortnite', 'minecraft', 'gta vi',
-    # 娱乐/电影/音乐
-    'movie', 'film', 'album', 'song', 'concert', 'music award',
-    'actor', 'actress', 'celebrity', 'oscar', 'grammy', 'emmy',
-    'box office', 'playboi carti', 'rihanna',
-]
+# 需要保留的分类（使用标签分类系统）
+ALLOWED_CATEGORIES = ['politics', 'crypto', 'business', 'geopolitics', 'science']
 
 # ── 工具函数 ──────────────────────────────────────────────
 
-def is_excluded(text: str) -> bool:
-    t = (text or '').lower()
-    return any(kw in t for kw in EXCLUDED)
+def load_tag_classification():
+    """加载标签分类数据"""
+    try:
+        with open(TAG_CLASSIFICATION_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        print(f"[警告] 未找到标签分类文件: {TAG_CLASSIFICATION_FILE}")
+        return None
+    except Exception as e:
+        print(f"[错误] 加载标签分类文件失败: {e}")
+        return None
 
 def is_expired(end_date: str) -> bool:
     if not end_date:
@@ -111,34 +100,66 @@ def fetch_markets():
     print(f"  总计获取到 {len(all_markets)} 个市场")
     return all_markets
 
-def filter_markets(markets):
-    """过滤市场：排除关键词、已过期、交易量低于10000的"""
+def filter_markets(markets, classification=None):
+    """过滤市场：使用标签分类筛选、过滤已过期、交易量低于10000的"""
     out = []
     excluded_count = 0
     low_volume_count = 0
     expired_count = 0
-    
-    for m in markets:
-        # 过滤排除关键词
-        if is_excluded(m.get('question', '')) or is_excluded(m.get('description', '')):
-            excluded_count += 1
-            continue
-        
-        # 过滤已过期
-        if is_expired(m.get('endDate')):
-            expired_count += 1
-            continue
-        
-        # 过滤低交易量（总交易量 < 10,000 USD）
-        volume = f(m.get('volumeNum'))
-        if volume < 10000:
-            low_volume_count += 1
-            continue
-        
-        out.append(m)
-    
+
+    # 如果有标签分类数据，使用标签筛选
+    if classification is not None:
+        # 收集所有允许的分类标签
+        allowed_tags = set()
+        for cat_id in ALLOWED_CATEGORIES:
+            cat_tags = classification['categories'].get(cat_id, {}).get('tags', [])
+            allowed_tags.update(cat_tags)
+
+        # 收集所有允许的市场ID
+        allowed_market_ids = set()
+        for tag in allowed_tags:
+            market_ids = classification['tag_to_markets'].get(tag, [])
+            allowed_market_ids.update(market_ids)
+
+        for m in markets:
+            # 使用标签分类筛选
+            market_id = str(m.get('id', ''))
+            if market_id not in allowed_market_ids:
+                excluded_count += 1
+                continue
+
+            # 过滤已过期
+            if is_expired(m.get('endDate')):
+                expired_count += 1
+                continue
+
+            # 过滤低交易量（总交易量 < 10,000 USD）
+            volume = f(m.get('volumeNum'))
+            if volume < 10000:
+                low_volume_count += 1
+                continue
+
+            out.append(m)
+    else:
+        # 如果没有标签分类数据，跳过分类筛选（仅过滤过期和低交易量）
+        print("  [警告] 标签分类数据不可用，跳过分类筛选")
+        for m in markets:
+            # 过滤已过期
+            if is_expired(m.get('endDate')):
+                expired_count += 1
+                continue
+
+            # 过滤低交易量（总交易量 < 10,000 USD）
+            volume = f(m.get('volumeNum'))
+            if volume < 10000:
+                low_volume_count += 1
+                continue
+
+            out.append(m)
+
     print(f"  过滤详情:")
-    print(f"    - 排除关键词: {excluded_count} 个")
+    if classification is not None:
+        print(f"    - 分类不符合: {excluded_count} 个")
     print(f"    - 已过期: {expired_count} 个")
     print(f"    - 低交易量(<10K): {low_volume_count} 个")
     print(f"  过滤后剩余: {len(out)} 个有效市场")
@@ -184,7 +205,96 @@ def rank_total_volume(markets, n=10):
 def rank_24h_volume(markets, n=10):
     return sorted(markets, key=lambda x: f(x.get('volume24hr')), reverse=True)[:n]
 
+def rank_24h_volume_excluding(markets, exclude_ids=None, n=10):
+    """按24h交易量排序，排除指定的市场ID"""
+    if exclude_ids is None:
+        exclude_ids = set()
+    else:
+        exclude_ids = set(exclude_ids)
+
+    filtered = [m for m in markets if str(m.get('id', '')) not in exclude_ids]
+    return sorted(filtered, key=lambda x: f(x.get('volume24hr')), reverse=True)[:n]
+
+def rank_total_volume_excluding(markets, exclude_ids=None, n=10):
+    """按总交易量排序，排除指定的市场ID"""
+    if exclude_ids is None:
+        exclude_ids = set()
+    else:
+        exclude_ids = set(exclude_ids)
+
+    filtered = [m for m in markets if str(m.get('id', '')) not in exclude_ids]
+    return sorted(filtered, key=lambda x: f(x.get('volumeNum')), reverse=True)[:n]
+
+def rank_24h_rise_excluding(markets, exclude_ids=None, n=10):
+    """按24h绝对值变化降序排序（概率上涨最快），排除指定的市场ID"""
+    if exclude_ids is None:
+        exclude_ids = set()
+    else:
+        exclude_ids = set(exclude_ids)
+
+    filtered = [m for m in markets if str(m.get('id', '')) not in exclude_ids]
+
+    def calc_abs_change(m):
+        ch = m.get('oneDayPriceChange')
+        if ch is None or ch <= -1:
+            return -999  # 无效值排到最后
+        price = f(m.get('lastTradePrice'))
+        historical_price = price / (1 + ch)
+        if historical_price < 0 or historical_price > 1:
+            return -999  # 无效值排到最后
+        return price - historical_price  # 返回绝对值变化
+
+    valid = [m for m in filtered if m.get('oneDayPriceChange') is not None]
+    return sorted(valid, key=calc_abs_change, reverse=True)[:n]
+
+def rank_24h_fall_excluding(markets, exclude_ids=None, n=10):
+    """按24h绝对值变化升序排序（概率下降最快），排除指定的市场ID"""
+    if exclude_ids is None:
+        exclude_ids = set()
+    else:
+        exclude_ids = set(exclude_ids)
+
+    filtered = [m for m in markets if str(m.get('id', '')) not in exclude_ids]
+
+    def calc_abs_change(m):
+        ch = m.get('oneDayPriceChange')
+        if ch is None or ch <= -1:
+            return 999  # 无效值排到最后
+        price = f(m.get('lastTradePrice'))
+        historical_price = price / (1 + ch)
+        if historical_price < 0 or historical_price > 1:
+            return 999  # 无效值排到最后
+        return price - historical_price  # 返回绝对值变化
+
+    valid = [m for m in filtered if m.get('oneDayPriceChange') is not None]
+    return sorted(valid, key=calc_abs_change)[:n]
+
+def rank_future_prob_excluding(markets, exclude_ids=None, n=10):
+    """筛选未来1个月到1年的高概率事件，排除指定的市场ID"""
+    if exclude_ids is None:
+        exclude_ids = set()
+    else:
+        exclude_ids = set(exclude_ids)
+
+    filtered = [m for m in markets if str(m.get('id', '')) not in exclude_ids]
+
+    now = datetime.now(timezone.utc)
+    future = []
+    for m in filtered:
+        ed = m.get('endDate')
+        if not ed:
+            continue
+        try:
+            end = datetime.fromisoformat(ed.replace('Z', '+00:00'))
+            days = (end - now).days
+            if 30 <= days <= 365:  # 1个月到1年
+                future.append(m)
+        except Exception:
+            continue
+    return sorted(future, key=lambda x: f(x.get('lastTradePrice')), reverse=True)[:n]
+
 def rank_future_prob(markets, n=10):
+    """筛选未来1个月到1年的高概率事件"""
     now = datetime.now(timezone.utc)
     future = []
     for m in markets:
@@ -194,11 +304,37 @@ def rank_future_prob(markets, n=10):
         try:
             end = datetime.fromisoformat(ed.replace('Z', '+00:00'))
             days = (end - now).days
-            if 7 <= days <= 365:
+            if 30 <= days <= 365:  # 1个月到1年
                 future.append(m)
         except Exception:
             continue
     return sorted(future, key=lambda x: f(x.get('lastTradePrice')), reverse=True)[:n]
+
+def rank_by_category_24h_volume(markets, classification, category_id, n=5):
+    """按分类筛选市场，并按24h交易量排序"""
+    if classification is None:
+        return []
+
+    # 获取该分类的标签
+    cat_tags = classification['categories'].get(category_id, {}).get('tags', [])
+    if not cat_tags:
+        return []
+
+    # 收集该分类下的市场ID
+    allowed_market_ids = set()
+    for tag in cat_tags:
+        market_ids = classification['tag_to_markets'].get(tag, [])
+        allowed_market_ids.update(market_ids)
+
+    # 筛选该分类的市场
+    category_markets = []
+    for m in markets:
+        market_id = str(m.get('id', ''))
+        if market_id in allowed_market_ids:
+            category_markets.append(m)
+
+    # 按24h交易量排序
+    return sorted(category_markets, key=lambda x: f(x.get('volume24hr')), reverse=True)[:n]
 
 # ── HTML 生成 ─────────────────────────────────────────────
 
@@ -433,32 +569,60 @@ def section(icon, title, sort_key_label, table_html):
     {table_html}
   </div>"""
 
-def generate_html(markets):
+def generate_html(markets, classification=None):
     now     = datetime.now()
     now_str = now.strftime('%Y-%m-%d %H:%M:%S')
     date_str= now.strftime('%Y-%m-%d')
 
-    r1 = rank_24h_rise(markets)
-    r2 = rank_24h_fall(markets)
-    r3 = rank_total_volume(markets)
-    r4 = rank_24h_volume(markets)
-    r5 = rank_future_prob(markets)
+    # 生成分类主题榜单，并收集已在分类榜单中的市场ID
+    category_sections = []
+    category_market_ids = set()  # 收集所有分类榜单中的市场ID
+    if classification is not None:
+        categories_info = {
+            'politics': {'icon': '🏛️', 'name': '政治'},
+            'crypto': {'icon': '₿', 'name': '加密货币'},
+            'business': {'icon': '💼', 'name': '商业经济'},
+            'geopolitics': {'icon': '🌍', 'name': '地缘政治'},
+            'science': {'icon': '🔬', 'name': '科学技术'},
+        }
 
-    sections_html = ''.join([
+        for cat_id, cat_info in categories_info.items():
+            cat_markets = rank_by_category_24h_volume(markets, classification, cat_id, n=5)
+            if cat_markets:
+                # 收集这些市场的ID，用于后续去重
+                for m in cat_markets:
+                    category_market_ids.add(str(m.get('id', '')))
+                section_html = section(
+                    cat_info['icon'],
+                    f'{cat_info["name"]} TOP5',
+                    '24h 交易量（降序）',
+                    build_table(cat_markets, show_end_date=True)
+                )
+                category_sections.append(section_html)
+
+    # 生成其他榜单，排除已在分类榜单中出现的市场（全局去重）
+    r1 = rank_24h_rise_excluding(markets, exclude_ids=category_market_ids, n=10)
+    r2 = rank_24h_fall_excluding(markets, exclude_ids=category_market_ids, n=10)
+    r3 = rank_total_volume_excluding(markets, exclude_ids=category_market_ids, n=10)
+    r4 = rank_24h_volume_excluding(markets, exclude_ids=category_market_ids, n=10)
+    r5 = rank_future_prob_excluding(markets, exclude_ids=category_market_ids, n=10)
+
+    # 汇总所有榜单
+    sections_html = ''.join(category_sections + [
         section('📈', '概率上涨最快 TOP10',
                 '24h 概率变化（降序）',
                 build_table(r1, show_end_date=True)),
         section('📉', '概率下降最快 TOP10',
                 '24h 概率变化（升序）',
                 build_table(r2, show_end_date=True)),
-        section('💰', '历史交易量最大 TOP10',
-                '历史总交易量',
+        section('💰', '历史交易量最大 TOP10 (已剔除前面重复项)',
+                '历史总交易量（已剔除分类榜单中的市场）',
                 build_table(r3, show_end_date=True)),
-        section('🔥', '24h 交易量最大 TOP10',
-                '24h 新增交易量',
+        section('🔥', '24h 交易量最大 TOP10 (已剔除前面重复项)',
+                '24h 新增交易量（已剔除分类榜单中的市场）',
                 build_table(r4, show_end_date=True)),
-        section('🎯', '未来高概率事件 TOP10',
-                '当前概率（截止日期: 未来 7 天 ~ 1 年）',
+        section('🎯', '未来高概率事件 TOP10 (已剔除前面重复项)',
+                '当前概率（已剔除分类榜单中的市场）（截止日期: 未来 1 个月 ~ 1 年）',
                 build_table(r5, show_end_date=True)),
     ])
 
@@ -532,29 +696,37 @@ def send_telegram_document(html_content, date_str):
 
 def main():
     print("=" * 56)
-    print("Polymarket 每日报告生成器 V2  (无历史数据)")
+    print("Polymarket 每日报告生成器 V2  (标签分类筛选)")
     print("=" * 56)
 
+    # 加载标签分类数据
+    print("\n加载标签分类数据...")
+    classification = load_tag_classification()
+    if classification is None:
+        print("  [警告] 标签分类数据不可用，将跳过分类筛选")
+    else:
+        print(f"  分类数据加载成功!")
+        print(f"  允许的分类: {ALLOWED_CATEGORIES}")
+
     markets_raw = fetch_markets()
-    markets     = filter_markets(markets_raw)
+    markets     = filter_markets(markets_raw, classification)
 
     if not markets:
         print("没有找到有效市场数据，退出。")
         return
 
-    html     = generate_html(markets)
+    html     = generate_html(markets, classification)
     filename = f"polymarket_report_{datetime.now().strftime('%Y%m%d')}.html"
 
     with open(filename, 'w', encoding='utf-8') as fh:
         fh.write(html)
 
     print(f"\n报告已生成: {filename}")
-    print("5 个维度 TOP10 全部使用 Gamma API 内置字段，无需本地历史数据。")
-    
+    print("5 个维度 TOP10 + 5 个分类主题 TOP5 全部使用 Gamma API 内置字段，无需本地历史数据。")
+
     # 发送到 Telegram
     success = send_telegram_document(html, datetime.now().strftime('%Y%m%d'))
     print(f"[RESULT] Telegram send: {'SUCCESS' if success else 'FAILED'}")
 
 if __name__ == '__main__':
     main()
-
