@@ -328,10 +328,15 @@ def rank_future_prob(markets, n=10):
             continue
     return sorted(future, key=lambda x: f(x.get('lastTradePrice')), reverse=True)[:n]
 
-def rank_by_category_24h_volume(markets, classification, category_id, n=5):
-    """按分类筛选市场，并按24h交易量排序"""
+def rank_by_category_24h_volume(markets, classification, category_id, n=5, exclude_ids=None):
+    """按分类筛选市场，并按24h交易量排序，支持跨分类去重"""
     if classification is None:
         return []
+
+    if exclude_ids is None:
+        exclude_ids = set()
+    else:
+        exclude_ids = set(exclude_ids)
 
     # 获取该分类的标签
     cat_tags = classification['categories'].get(category_id, {}).get('tags', [])
@@ -344,15 +349,16 @@ def rank_by_category_24h_volume(markets, classification, category_id, n=5):
         market_ids = classification['tag_to_markets'].get(tag, [])
         allowed_market_ids.update(market_ids)
 
-    # 筛选该分类的市场
+    # 筛选该分类的市场（同时排除已在前面分类出现的市场）
     category_markets = []
     for m in markets:
         market_id = str(m.get('id', ''))
-        if market_id in allowed_market_ids:
+        if market_id in allowed_market_ids and market_id not in exclude_ids:
             category_markets.append(m)
 
     # 按24h交易量排序
     return sorted(category_markets, key=lambda x: f(x.get('volume24hr')), reverse=True)[:n]
+
 
 # ── HTML 生成 ─────────────────────────────────────────────
 
@@ -605,9 +611,13 @@ def generate_html(markets, classification=None):
         }
 
         for cat_id, cat_info in categories_info.items():
-            cat_markets = rank_by_category_24h_volume(markets, classification, cat_id, n=5)
+            # 排除前面分类已占用的市场，保证分类间不重复
+            cat_markets = rank_by_category_24h_volume(
+                markets, classification, cat_id, n=5,
+                exclude_ids=category_market_ids
+            )
             if cat_markets:
-                # 收集这些市场的ID，用于后续去重
+                # 将本分类市场ID加入全局集合，供后续分类和榜单去重
                 for m in cat_markets:
                     category_market_ids.add(str(m.get('id', '')))
                 section_html = section(
@@ -617,6 +627,7 @@ def generate_html(markets, classification=None):
                     build_table(cat_markets, show_end_date=True)
                 )
                 category_sections.append(section_html)
+
 
     # 生成其他榜单，排除已在分类榜单中出现的市场（全局去重）
     r1 = rank_24h_rise_excluding(markets, exclude_ids=category_market_ids, n=10)
