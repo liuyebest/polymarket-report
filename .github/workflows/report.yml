@@ -2,34 +2,41 @@ name: Polymarket Daily Report
 
 on:
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '10 0 * * *'
   workflow_dispatch:
 
 jobs:
   report:
     runs-on: ubuntu-24.04
-    
+
     steps:
       - uses: actions/checkout@v4.2.2
-      
+
       - name: Set up Python
         uses: actions/setup-python@v5.4.0
         with:
           python-version: '3.12'
-      
+
       - name: Install dependencies
         run: pip install requests
-      
-      - name: Debug environment variables
-        env:
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+      - name: Build tag classification
         run: |
-          echo "TELEGRAM_TOKEN is set: ${{ secrets.TELEGRAM_TOKEN != '' }}"
-          echo "TELEGRAM_CHAT_ID is: ${{ secrets.TELEGRAM_CHAT_ID }}"
-      
+          echo "=== 开始生成标签分类数据 ==="
+          python build_tag_categories.py
+          echo "=== 标签分类数据生成完成 ==="
+          if [ -f "tag_classification.json" ]; then
+            echo "tag_classification.json 生成成功，大小: $(wc -c < tag_classification.json) bytes"
+          else
+            echo "tag_classification.json 生成失败！"
+            exit 1
+          fi
+
       - name: Run report
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python polymarket_local.py
+        run: |
+          echo "=== 开始生成并发送报告 ==="
+          python polymarket_local.py
+          echo "=== 报告脚本执行完成 ==="
