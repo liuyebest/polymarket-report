@@ -25,15 +25,33 @@ ALLOWED_CATEGORIES = ['politics', 'crypto', 'business', 'geopolitics', 'science'
 
 def load_tag_classification():
     """加载标签分类数据"""
+    import os
+    cwd = os.getcwd()
+    abs_path = os.path.abspath(TAG_CLASSIFICATION_FILE)
+    print(f"  当前工作目录: {cwd}")
+    print(f"  标签分类文件路径: {abs_path}")
+    print(f"  文件是否存在: {os.path.exists(abs_path)}")
+
     try:
         with open(TAG_CLASSIFICATION_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
+            data = json.load(f)
+        file_size = os.path.getsize(abs_path)
+        print(f"  文件大小: {file_size} bytes")
+        cats = data.get('categories', {})
+        tag_to_markets = data.get('tag_to_markets', {})
+        total_market_ids = sum(len(v) for v in tag_to_markets.values())
+        print(f"  分类数量: {len(cats)}, 标签数量: {len(tag_to_markets)}, 市场ID总数: {total_market_ids}")
+        for cat_id, cat_info in cats.items():
+            print(f"    [{cat_id}] 标签数: {len(cat_info.get('tags', []))}")
+        return data
     except FileNotFoundError:
-        print(f"[警告] 未找到标签分类文件: {TAG_CLASSIFICATION_FILE}")
+        print(f"  [警告] 未找到标签分类文件: {TAG_CLASSIFICATION_FILE}")
+        print(f"  [提示] 请先运行: python build_tag_categories.py")
         return None
     except Exception as e:
-        print(f"[错误] 加载标签分类文件失败: {e}")
+        print(f"  [错误] 加载标签分类文件失败: {e}")
         return None
+
 
 def is_expired(end_date: str) -> bool:
     if not end_date:
@@ -658,7 +676,7 @@ def generate_html(markets, classification=None):
 
 # ── Telegram 发送 ───────────────────────────────────────────
 
-def send_telegram_document(html_content, date_str):
+def send_telegram_document(html_content, date_str, cat_status=""):
     """发送HTML文件到Telegram"""
     telegram_token = os.environ.get('TELEGRAM_TOKEN')
     telegram_chat_id = os.environ.get('TELEGRAM_CHAT_ID')
@@ -681,7 +699,11 @@ def send_telegram_document(html_content, date_str):
     try:
         with open(filename, 'rb') as f:
             files = {'document': (filename, f, 'text/html')}
-            data = {'chat_id': telegram_chat_id, 'caption': f"Polymarket Daily Report - {date_str}"}
+            caption = f"📊 Polymarket Daily Report - {date_str}"
+            if cat_status:
+              caption += f"\n{cat_status}"
+            data = {'chat_id': telegram_chat_id, 'caption': caption}
+
             r = requests.post(url, data=data, files=files, timeout=(30, 120))
         
         print(f"[RESPONSE] Telegram API Status: {r.status_code}")
@@ -725,7 +747,11 @@ def main():
     print("5 个维度 TOP10 + 5 个分类主题 TOP5 全部使用 Gamma API 内置字段，无需本地历史数据。")
 
     # 发送到 Telegram
-    success = send_telegram_document(html, datetime.now().strftime('%Y%m%d'))
+    date_str = datetime.now().strftime('%Y%m%d')
+    cat_status = "✅ 含5个分类TOP5" if classification is not None else "⚠️ 无分类TOP5（tag_classification.json未找到）"
+    print(f"\n报告状态: {cat_status}")
+    success = send_telegram_document(html, date_str, cat_status)
+
     print(f"[RESULT] Telegram send: {'SUCCESS' if success else 'FAILED'}")
 
 if __name__ == '__main__':
