@@ -17,7 +17,7 @@ CATEGORIES = {
                     'world elections', 'global elections', 'us election', 'democrat', 'republicans',
                     'democrats', 'mag election', 'mayor', 'mayoral', 'referendum', 'parliament',
                     'supreme court', 'scotus', 'inauguration', 'cabinet', 'impeach', 'gerrymander',
-                    'voter'],
+                    'voter','courts', 'epstein'],
         'display_name': '政治',
         'emoji': '[POL]'
     },
@@ -36,7 +36,7 @@ CATEGORIES = {
                     'epl', 'la liga', 'bundesliga', 'rugby', 'golf', 'nba', 'mls',
                     'premier league', 'serie a', 'ligue 1', 'champions league', 'europa',
                     'fifa', 'world cup', 'ufc', 'mma', 'boxing', 'f1', 'formula 1',
-                    'nfl draft', 'super bowl', 'world series', 'stanley cup'],
+                    'nfl draft', 'super bowl', 'world series', 'stanley cup','games'],
         'display_name': '体育',
         'emoji': '[SPO]'
     },
@@ -54,7 +54,7 @@ CATEGORIES = {
                     'inflation', 'gdp', 'sp500', 's&p', 'treasur', 'commodit',
                     'forex', 'exchange rate', 'dollar', 'jobs report', 'fed rate',
                     'fomc', 'housing', 'real estate', 'gold', 'oil', 'silver',
-                    'bitcoin dominance', 'economic policy'],
+                    'bitcoin dominance', 'economic policy','macro', 'indicies', 'powell', 'cpi', 'apple'],
         'display_name': '商业经济',
         'emoji': '[BUS]'
     },
@@ -64,7 +64,8 @@ CATEGORIES = {
                     'ceasefire', 'sanction', 'tariff', 'trade war', 'palestine',
                     'gaza', 'hamas', 'putin', 'xi jinping', 'sudan', 'yemen',
                     'north korea', 'korea', 'diplomacy', 'foreign policy', 'refugee',
-                    'terror', 'isis', 'migration', 'border'],
+                    'terror', 'isis', 'migration', 'border','venezuela', 'canada', 'greenland', 'uk', 'europe', 'france', 
+                     'brazil', 'spillover', 'unrest'],
         'display_name': '地缘政治',
         'emoji': '[GEO]'
     },
@@ -74,7 +75,7 @@ CATEGORIES = {
                     'spacex', 'nasa', 'elon musk', 'robot', 'quantum',
                     'earthquake', 'hurricane', 'natural disaster', 'disease',
                     'pandemic', 'nuclear', 'energy', 'anthropic', 'claude',
-                    'deepseek', 'grok', 'llm'],
+                    'deepseek', 'grok', 'llm','sam altman'],
         'display_name': '科学技术',
         'emoji': '[SCI]'
     }
