@@ -26,6 +26,7 @@ ALLOWED_CATEGORIES = ['politics', 'crypto', 'business', 'geopolitics', 'science'
 def load_tag_classification():
     """加载标签分类数据"""
     import os
+    # 调试：显示当前工作目录和文件是否存在
     cwd = os.getcwd()
     abs_path = os.path.abspath(TAG_CLASSIFICATION_FILE)
     print(f"  当前工作目录: {cwd}")
@@ -37,6 +38,7 @@ def load_tag_classification():
             data = json.load(f)
         file_size = os.path.getsize(abs_path)
         print(f"  文件大小: {file_size} bytes")
+        # 验证数据结构
         cats = data.get('categories', {})
         tag_to_markets = data.get('tag_to_markets', {})
         total_market_ids = sum(len(v) for v in tag_to_markets.values())
@@ -51,7 +53,6 @@ def load_tag_classification():
     except Exception as e:
         print(f"  [错误] 加载标签分类文件失败: {e}")
         return None
-
 
 def is_expired(end_date: str) -> bool:
     if not end_date:
@@ -359,7 +360,6 @@ def rank_by_category_24h_volume(markets, classification, category_id, n=5, exclu
     # 按24h交易量排序
     return sorted(category_markets, key=lambda x: f(x.get('volume24hr')), reverse=True)[:n]
 
-
 # ── HTML 生成 ─────────────────────────────────────────────
 
 CSS = """
@@ -600,7 +600,7 @@ def generate_html(markets, classification=None):
 
     # 生成分类主题榜单，并收集已在分类榜单中的市场ID
     category_sections = []
-    category_market_ids = set()  # 收集所有分类榜单中的市场ID
+    category_market_ids = set()  # 收集所有分类榜单中的市场ID（跨分类全局去重）
     if classification is not None:
         categories_info = {
             'politics': {'icon': '🏛️', 'name': '政治'},
@@ -627,7 +627,6 @@ def generate_html(markets, classification=None):
                     build_table(cat_markets, show_end_date=True)
                 )
                 category_sections.append(section_html)
-
 
     # 生成其他榜单，排除已在分类榜单中出现的市场（全局去重）
     r1 = rank_24h_rise_excluding(markets, exclude_ids=category_market_ids, n=10)
@@ -691,35 +690,36 @@ def send_telegram_document(html_content, date_str, cat_status=""):
     """发送HTML文件到Telegram"""
     telegram_token = os.environ.get('TELEGRAM_TOKEN')
     telegram_chat_id = os.environ.get('TELEGRAM_CHAT_ID')
-    
+
     if not telegram_token or not telegram_chat_id:
         print("[ERROR] TELEGRAM_TOKEN or TELEGRAM_CHAT_ID not set, skipping Telegram send")
         return False
-    
+
     filename = f"polymarket_report_{date_str}.html"
-    
+
     # 保存HTML文件
     with open(filename, 'w', encoding='utf-8') as f:
         f.write(html_content)
-    
+
     print(f"[SENDING] Sending to Telegram: {filename}")
-    
+
+    # 构建 caption（含分类状态提示）
+    caption = f"📊 Polymarket Daily Report - {date_str}"
+    if cat_status:
+        caption += f"\n{cat_status}"
+
     # 发送到Telegram
     url = f"https://api.telegram.org/bot{telegram_token}/sendDocument"
-    
+
     try:
         with open(filename, 'rb') as f:
             files = {'document': (filename, f, 'text/html')}
-            caption = f"📊 Polymarket Daily Report - {date_str}"
-            if cat_status:
-              caption += f"\n{cat_status}"
             data = {'chat_id': telegram_chat_id, 'caption': caption}
-
             r = requests.post(url, data=data, files=files, timeout=(30, 120))
-        
+
         print(f"[RESPONSE] Telegram API Status: {r.status_code}")
         print(f"[RESPONSE] Response body: {r.text[:200]}...")
-        
+
         return r.json().get('ok', False)
     except Exception as e:
         print(f"[ERROR] Telegram send error: {e}")
@@ -748,22 +748,24 @@ def main():
         print("没有找到有效市场数据，退出。")
         return
 
+    # 生成报告状态摘要
+    cat_status = "✅ 含5个分类TOP5" if classification is not None else "⚠️ 无分类TOP5（tag_classification.json未找到）"
+    print(f"\n报告状态: {cat_status}")
+
     html     = generate_html(markets, classification)
     filename = f"polymarket_report_{datetime.now().strftime('%Y%m%d')}.html"
 
     with open(filename, 'w', encoding='utf-8') as fh:
         fh.write(html)
 
-    print(f"\n报告已生成: {filename}")
+    print(f"报告已生成: {filename}")
     print("5 个维度 TOP10 + 5 个分类主题 TOP5 全部使用 Gamma API 内置字段，无需本地历史数据。")
 
     # 发送到 Telegram
     date_str = datetime.now().strftime('%Y%m%d')
-    cat_status = "✅ 含5个分类TOP5" if classification is not None else "⚠️ 无分类TOP5（tag_classification.json未找到）"
-    print(f"\n报告状态: {cat_status}")
     success = send_telegram_document(html, date_str, cat_status)
-
     print(f"[RESULT] Telegram send: {'SUCCESS' if success else 'FAILED'}")
 
 if __name__ == '__main__':
     main()
+
