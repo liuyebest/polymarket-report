@@ -120,10 +120,11 @@ def fetch_markets():
     return all_markets
 
 def filter_markets(markets, classification=None):
-    """过滤市场：使用标签分类筛选、过滤已过期、交易量低于10000的"""
+    """过滤市场：使用标签分类筛选、过滤已过期、24h交易量低于10000、历史总交易量低于50000的"""
     out = []
     excluded_count = 0
     low_volume_count = 0
+    low_24h_count = 0
     expired_count = 0
 
     # 如果有标签分类数据，使用标签筛选
@@ -152,10 +153,16 @@ def filter_markets(markets, classification=None):
                 expired_count += 1
                 continue
 
-            # 过滤低交易量（总交易量 < 10,000 USD）
+            # 过滤低历史总交易量（< 50,000 USD）
             volume = f(m.get('volumeNum'))
-            if volume < 10000:
+            if volume < 50000:
                 low_volume_count += 1
+                continue
+
+            # 过滤低24h交易量（< 10,000 USD）
+            volume_24h = f(m.get('volume24hr'))
+            if volume_24h < 10000:
+                low_24h_count += 1
                 continue
 
             out.append(m)
@@ -168,10 +175,16 @@ def filter_markets(markets, classification=None):
                 expired_count += 1
                 continue
 
-            # 过滤低交易量（总交易量 < 10,000 USD）
+            # 过滤低历史总交易量（< 50,000 USD）
             volume = f(m.get('volumeNum'))
-            if volume < 10000:
+            if volume < 50000:
                 low_volume_count += 1
+                continue
+
+            # 过滤低24h交易量（< 10,000 USD）
+            volume_24h = f(m.get('volume24hr'))
+            if volume_24h < 10000:
+                low_24h_count += 1
                 continue
 
             out.append(m)
@@ -180,7 +193,8 @@ def filter_markets(markets, classification=None):
     if classification is not None:
         print(f"    - 分类不符合: {excluded_count} 个")
     print(f"    - 已过期: {expired_count} 个")
-    print(f"    - 低交易量(<10K): {low_volume_count} 个")
+    print(f"    - 历史总交易量(<50K): {low_volume_count} 个")
+    print(f"    - 24h交易量(<10K): {low_24h_count} 个")
     print(f"  过滤后剩余: {len(out)} 个有效市场")
     return out
 
