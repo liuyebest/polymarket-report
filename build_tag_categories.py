@@ -10,72 +10,146 @@ import time
 import sys
 
 # ── 分类定义 ──────────────────────────────────────────────
+# 关键词匹配规则：大小写不敏感，子串匹配（keyword in tag.lower()）
+# 优先级：列表顺序即匹配优先级，标签只归入第一个匹配的分类
 CATEGORIES = {
     'politics': {
-        'keywords': ['politics', 'election', 'president', 'trump', 'biden', 'congress', 'senate',
-                    'republican', 'democratic', 'primary', 'midterm', 'midterms', 'house', 'governor',
-                    'world elections', 'global elections', 'us election', 'democrat', 'republicans',
-                    'democrats', 'mag election', 'mayor', 'mayoral', 'referendum', 'parliament',
-                    'supreme court', 'scotus', 'inauguration', 'cabinet', 'impeach', 'gerrymander',
-                    'voter','courts', 'epstein'],
+        'keywords': [
+            # 核心政治词
+            'politics', 'election', 'president', 'trump', 'biden', 'congress', 'senate',
+            'republican', 'democratic', 'primary', 'midterm', 'midterms', 'house', 'governor',
+            'world elections', 'global elections', 'us election', 'democrat', 'republicans',
+            'democrats', 'mag election', 'mayor', 'mayoral', 'referendum', 'parliament',
+            'supreme court', 'scotus', 'inauguration', 'cabinet', 'impeach', 'gerrymander',
+            'voter', 'courts',
+            # 2026-05-13 新增：覆盖高频未匹配标签
+            'gop',          # GOP = Republican Party (127 markets)
+            'veep',         # Vice President 专题 (255 markets)
+            ' vp',          # VP tag（加空格前缀避免误匹配如 "MVP"）
+            'vice president',
+        ],
         'display_name': '政治',
         'emoji': '[POL]'
     },
     'crypto': {
-        'keywords': ['crypto', 'bitcoin', 'ethereum', 'btc', 'eth', 'crypto prices',
-                    'xrp', 'solana', 'ripple', 'bnb', 'dogecoin', 'ada', 'polygon',
-                    'chainlink', 'uniswap', 'defi', 'token launch', 'token', 'fdv',
-                    'memecoin', 'stablecoin', 'airdrop', 'binance', 'coinbase', 'nft',
-                    'hyperliquid', 'usdt'],
+        'keywords': [
+            'crypto', 'bitcoin', 'ethereum', 'btc', 'eth', 'crypto prices',
+            'xrp', 'solana', 'ripple', 'bnb', 'dogecoin', 'ada', 'polygon',
+            'chainlink', 'uniswap', 'defi', 'token launch', 'token', 'fdv',
+            'memecoin', 'stablecoin', 'airdrop', 'binance', 'coinbase', 'nft',
+            'hyperliquid', 'usdt',
+        ],
         'display_name': '加密货币',
         'emoji': '[CRY]'
     },
     'sports': {
-        'keywords': ['sports', 'soccer', 'basketball', 'football', 'hockey', 'tennis',
-                    'cricket', 'esports', 'nfl', 'nba', 'nhl', 'mlb', 'ncaa',
-                    'epl', 'la liga', 'bundesliga', 'rugby', 'golf', 'nba', 'mls',
-                    'premier league', 'serie a', 'ligue 1', 'champions league', 'europa',
-                    'fifa', 'world cup', 'ufc', 'mma', 'boxing', 'f1', 'formula 1',
-                    'nfl draft', 'super bowl', 'world series', 'stanley cup','games'],
+        'keywords': [
+            'sports', 'soccer', 'basketball', 'football', 'hockey', 'tennis',
+            'cricket', 'esports', 'nfl', 'nba', 'nhl', 'mlb', 'ncaa',
+            'epl', 'la liga', 'bundesliga', 'rugby', 'golf', 'mls',
+            'premier league', 'serie a', 'ligue 1', 'champions league', 'europa',
+            'fifa', 'world cup', 'ufc', 'mma', 'boxing', 'f1', 'formula 1',
+            'nfl draft', 'super bowl', 'world series', 'stanley cup', 'games',
+            # 2026-05-13 新增：覆盖高频未匹配标签
+            'copa',         # Copa Libertadores/Sudamericana/do Brasil (~2600 markets)
+            'nwsl',         # 女足联赛 (880 markets)
+            'rodeo',        # 美国牛仔竞技 (155 markets)
+            'pga',          # 高尔夫 PGA Championship (120 markets)
+            'grand slam',   # 网球大满贯 (110 markets)
+            'open',         # Madrid Open 等网球赛 (108 markets)
+            'relegation',   # 足球降级 (122 markets)
+            'promotion',    # 足球升级 (101 markets)
+            'playoff',      # 季后赛
+            'league one', 'league two',  # 英格兰低级别联赛 (68 markets each)
+            'conn smythe',  # NHL MVP (117 markets)
+            'rookie',       # 新秀奖 (92 markets)
+            'batting average', 'home run', 'strikeout', 'stolen base', 'rbi',  # 棒球统计
+            'platinum glove',  # 棒球奖项 (82 markets)
+        ],
         'display_name': '体育',
         'emoji': '[SPO]'
     },
     'culture': {
-        'keywords': ['culture', 'music', 'movie', 'celebrity', 'entertainment', 'awards',
-                    'oscars', 'grammys', 'fashion', 'eurovision', 'kpop', 'k-pop',
-                    'taylor swift', 'reality tv', 'coachella'],
+        'keywords': [
+            'culture', 'music', 'movie', 'celebrity', 'entertainment', 'awards',
+            'oscars', 'grammys', 'fashion', 'eurovision', 'kpop', 'k-pop',
+            'taylor swift', 'reality tv', 'coachella',
+            # 2026-05-13 新增
+            'anime',        # 动漫 (576 markets)
+            'podcast',      # 播客 (76 markets)
+            'coding',       # 编程竞赛/文化 (58 markets)
+        ],
         'display_name': '文化娱乐',
         'emoji': '[CUL]'
     },
     'business': {
-        'keywords': ['business', 'finance', 'economy', 'stock', 'equities', 'markets',
-                    'big tech', 'tech', 'stocks', 'pre-market', 'premarket', 'ipo',
-                    'ipos', 'earnings', 'acquisition', 'merger', 'fed', 'interest rate',
-                    'inflation', 'gdp', 'sp500', 's&p', 'treasur', 'commodit',
-                    'forex', 'exchange rate', 'dollar', 'jobs report', 'fed rate',
-                    'fomc', 'housing', 'real estate', 'gold', 'oil', 'silver',
-                    'bitcoin dominance', 'economic policy','macro', 'indicies', 'powell', 'cpi', 'apple'],
+        'keywords': [
+            'business', 'finance', 'economy', 'stock', 'equities', 'markets',
+            'big tech', 'tech', 'stocks', 'pre-market', 'premarket', 'ipo',
+            'ipos', 'earnings', 'acquisition', 'merger', 'fed', 'interest rate',
+            'inflation', 'gdp', 'sp500', 's&p', 'treasur', 'commodit',
+            'forex', 'exchange rate', 'dollar', 'jobs report', 'fed rate',
+            'fomc', 'housing', 'real estate', 'gold', 'oil', 'silver',
+            'bitcoin dominance', 'economic policy', 'macro', 'indicies',
+            'powell', 'cpi', 'apple',
+        ],
         'display_name': '商业经济',
         'emoji': '[BUS]'
     },
     'geopolitics': {
-        'keywords': ['geopolitics', 'war', 'ukraine', 'middle east', 'iran', 'israel',
-                    'russia', 'china', 'world', 'nato', 'nuclear', 'military',
-                    'ceasefire', 'sanction', 'tariff', 'trade war', 'palestine',
-                    'gaza', 'hamas', 'putin', 'xi jinping', 'sudan', 'yemen',
-                    'north korea', 'korea', 'diplomacy', 'foreign policy', 'refugee',
-                    'terror', 'isis', 'migration', 'border','venezuela', 'canada', 'greenland', 'uk', 'europe', 'france', 
-                     'brazil', 'spillover', 'unrest'],
+        'keywords': [
+            'geopolitics', 'war', 'ukraine', 'middle east', 'iran', 'israel',
+            'russia', 'china', 'nato', 'nuclear', 'military',
+            'ceasefire', 'sanction', 'tariff', 'trade war', 'palestine',
+            'gaza', 'hamas', 'putin', 'xi jinping', 'sudan', 'yemen',
+            'north korea', 'korea', 'diplomacy', 'foreign policy', 'refugee',
+            'terror', 'isis', 'migration', 'border',
+            # 之前已在 build_tag_categories.py 中添加但 JSON 未更新的
+            'venezuela', 'canada', 'greenland', 'uk', 'europe', 'france', 'brazil',
+            'spillover', 'unrest',
+            # 2026-05-13 新增：覆盖高频未匹配标签
+            'argentina',    # (133 markets)
+            'mexico',       # (68 markets)
+            'meloni',       # 意大利总理 (60 markets)
+            'united kingdom',  # 与 uk 互补（大小写变体）
+            'ireland',      # (66 markets)
+            'portugal',     # (90 markets)
+            'sweden',       # (72 markets)
+            'cyprus',       # (50 markets)
+            'malta',        # (103 markets)
+            'peru',         # (310 markets) - 选举/地缘
+            'taiwan',       # (44 markets)
+            'india',        # 地缘政治大国
+            'pakistan',
+            'afghanistan',
+            'syria',
+            'turkey',
+            'zeldin',       # 美国政治人物 (78 markets)
+        ],
         'display_name': '地缘政治',
         'emoji': '[GEO]'
     },
     'science': {
-        'keywords': ['science', 'ai', 'artificial intelligence', 'technology',
-                    'space', 'weather', 'climate', 'openai', 'chatgpt', 'gpt',
-                    'spacex', 'nasa', 'elon musk', 'robot', 'quantum',
-                    'earthquake', 'hurricane', 'natural disaster', 'disease',
-                    'pandemic', 'nuclear', 'energy', 'anthropic', 'claude',
-                    'deepseek', 'grok', 'llm','sam altman'],
+        'keywords': [
+            'science', 'ai', 'artificial intelligence', 'technology',
+            'space', 'weather', 'climate', 'openai', 'chatgpt', 'gpt',
+            'spacex', 'nasa', 'elon musk', 'robot', 'quantum',
+            'earthquake', 'hurricane', 'natural disaster', 'disease',
+            'pandemic', 'nuclear', 'energy', 'anthropic', 'claude',
+            'deepseek', 'grok', 'llm',
+            # 之前已在 build_tag_categories.py 中添加但 JSON 未更新的
+            'sam altman', 'epstein',
+            # 2026-05-13 新增：覆盖高频未匹配标签
+            'temperature',  # Highest/Lowest temperature (~2024 markets)
+            'gpt-',         # GPT-5.5 等具体版本标签 (8 markets)
+            'gemini',       # Google AI
+            'mistral',      # AI 模型
+            'meta ai',
+            'wildfire',     # 自然灾害
+            'flood',
+            'volcano',
+            'drought',
+        ],
         'display_name': '科学技术',
         'emoji': '[SCI]'
     }
@@ -254,4 +328,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
